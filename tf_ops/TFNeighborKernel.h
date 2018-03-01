@@ -80,30 +80,25 @@ void locWSumBackwardGPU(
 );
 
 
+
 template<typename FLT_TYPE,typename INT_TYPE>
-void locWFeatSumForwardGPUV2(
-        FLT_TYPE *d_itfeats,              // [pn,n,m,ofn]
-        FLT_TYPE *d_ilw,                  // [pn,n,m]
-        INT_TYPE *d_icidxs,               // [pn] inidxs_lens[i]=n
+void neighborSumFeatGatherGPU(
+        FLT_TYPE *d_ifeats,               // [csum,fd]
+        INT_TYPE *d_icidxs,               // [csum]
         INT_TYPE pn,
-        INT_TYPE ofn,
-        INT_TYPE m,
+        INT_TYPE fd,
         INT_TYPE csum,
-        FLT_TYPE *d_otfeats_sum           // [pn,m,ofn]
+        FLT_TYPE *d_ogfeats_sum           // [pn,fd]
 );
 
 template<typename FLT_TYPE,typename INT_TYPE>
-void locWFeatSumBackwardGPUV2(
-        FLT_TYPE *d_itfeats,              // [pn,n,m,ofn]
-        FLT_TYPE *d_ilw,                  // [pn,n,m]
-        FLT_TYPE *d_dotfeats_sum,         // [pn,m,ofn]
-        INT_TYPE *d_icidxs,                // [csum] inidxs_lens[i]=n
+void neighborSumFeatScatterGPU(
+        FLT_TYPE *d_igfeats_sum,            // [pn,fd]
+        INT_TYPE *d_icidxs,                 // [csum] inidxs_lens[i]=n
         INT_TYPE pn,
-        INT_TYPE ofn,
-        INT_TYPE m,
+        INT_TYPE fd,
         INT_TYPE csum,
-        FLT_TYPE *d_ditfeats,           // [pn,n,m,ofn]
-        FLT_TYPE *d_dilw                // [pn,n,m]
+        FLT_TYPE *d_osfeats                 // [csum,fd]
 );
 
 

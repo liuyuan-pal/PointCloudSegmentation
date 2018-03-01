@@ -2,51 +2,40 @@
 #include "TFCudaCommon.h"
 
 template<typename FLT_TYPE,typename INT_TYPE>
-__global__ void locationWeightFeatSumForwardKernelV2(
-        FLT_TYPE *itfeats,              // [pn,n,m,ofn]
-        FLT_TYPE *ilw,                  // [pn,n,m]
-        INT_TYPE *icidxs,               // [pn,n] or [csum]
-        INT_TYPE ofn,
-        INT_TYPE m,
+__global__ void sumFeatGather(
+        FLT_TYPE *ifeats,               // [csum,fd]
+        INT_TYPE *icidxs,               // [csum]
+        INT_TYPE fd,
         INT_TYPE csum,
-        FLT_TYPE *otfeats_sum           // [pn,m,ofn]
+        FLT_TYPE *ogfeats_sum           // [pn,fd]
 )
 {
     int ci = threadIdx.x + blockIdx.x*blockDim.x;
-    int mi = threadIdx.y + blockIdx.y*blockDim.y;
-    int oi = threadIdx.z + blockIdx.z*blockDim.z;
-    if(ci>=csum||mi>=m||oi>=ofn) return;
+    int fi = threadIdx.y + blockIdx.y*blockDim.y;
+    if(ci>=csum||fi>=fd) return;
 
     INT_TYPE pi = icidxs[ci];
-    atomicAdd(&otfeats_sum[pi*ofn*m+mi*ofn+oi],
-              ilw[ci*m+mi]*itfeats[ci*ofn*m+mi*ofn+oi]);
+    atomicAdd(&ogfeats_sum[pi*fd+fi],ifeats[ci*fd+fi]);
 }
 
 
 template<typename FLT_TYPE,typename INT_TYPE>
-void locWFeatSumForwardGPUV2(
-        FLT_TYPE *d_itfeats,              // [pn,n,m,ofn]
-        FLT_TYPE *d_ilw,                  // [pn,n,m]
-        INT_TYPE *d_icidxs,               // [pn] inidxs_lens[i]=n
+void neighborSumFeatGatherGPU(
+        FLT_TYPE *d_ifeats,               // [csum,fd]
+        INT_TYPE *d_icidxs,               // [csum]
         INT_TYPE pn,
-        INT_TYPE ofn,
-        INT_TYPE m,
+        INT_TYPE fd,
         INT_TYPE csum,
-        FLT_TYPE *d_otfeats_sum           // [pn,m,ofn]
+        FLT_TYPE *d_ogfeats_sum           // [pn,fd]
 )
 {
-    int tdim0,tdim1,tdim2;
-    int bdim0,bdim1,bdim2;
-
-    tdim2=64;
-    if(ofn<tdim2) tdim2=infTwoExp(ofn);
-    bdim2=ofn/tdim2;
-    if(ofn%tdim2>0) bdim2++;
+    int tdim0,tdim1,tdim2=1;
+    int bdim0,bdim1,bdim2=1;
 
     tdim1=1024/(tdim2);
-    if(m<tdim1) tdim1=infTwoExp(m);
-    bdim1=m/tdim1;
-    if(m%tdim1>0) bdim1++;
+    if(fd<tdim1) tdim1=infTwoExp(fd);
+    bdim1=fd/tdim1;
+    if(fd%tdim1>0) bdim1++;
 
     tdim0=1024/(tdim1*tdim2);
     if(csum<tdim0) tdim0=infTwoExp(csum);
@@ -60,69 +49,46 @@ void locWFeatSumForwardGPUV2(
 //    printf("%d %d %d\n",tdim0,tdim1,tdim2);
 //    printf("%d %d %d\n",bdim0,bdim1,bdim2);
 
-    gpuErrchk(cudaMemset(d_otfeats_sum,0,pn*m*ofn*sizeof(FLT_TYPE)))
-    locationWeightFeatSumForwardKernelV2<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>
-              (d_itfeats,d_ilw,d_icidxs,ofn,m,csum,d_otfeats_sum);
+    gpuErrchk(cudaMemset(d_ogfeats_sum,0,pn*fd*sizeof(FLT_TYPE)))
+    sumFeatGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_ifeats,d_icidxs,fd,csum,d_ogfeats_sum);
 }
 
 
 template<typename FLT_TYPE,typename INT_TYPE>
-__global__ void locationWeightFeatSumBackwardKernelV2(
-        FLT_TYPE *itfeats,              // [pn,n,m,ofn]
-        FLT_TYPE *ilw,                  // [pn,n,m]
-        FLT_TYPE *dotfeats_sum,         // [pn,m,ofn]
+__global__ void sumFeatScatter(
+        FLT_TYPE *igfeats_sum,          // [pn,fd]
         INT_TYPE *icidxs,               // [csum]
-        INT_TYPE ofn,
-        INT_TYPE m,
+        INT_TYPE fd,
         INT_TYPE csum,
-        FLT_TYPE *ditfeats,           // [pn,n,m,ofn]
-        FLT_TYPE *dilw                // [pn,n,m]
+        FLT_TYPE *osfeats               // [csum,fd]
 )
 {
     int ci = threadIdx.x + blockIdx.x*blockDim.x;
-    int mi = threadIdx.y + blockIdx.y*blockDim.y;
-    int oi = threadIdx.z + blockIdx.z*blockDim.z;
-    if(ci>=csum||mi>=m||oi>=ofn) return;
+    int fi = threadIdx.y + blockIdx.y*blockDim.y;
+    if(ci>=csum||fi>=fd) return;
 
     INT_TYPE pi=icidxs[ci];
-    FLT_TYPE *dotfeats_sum_p=&dotfeats_sum[pi*ofn*m+mi*ofn+oi];
-    FLT_TYPE *ilw_p=&ilw[ci*m+mi];
-    FLT_TYPE *itfeats_p=&itfeats[ci*ofn*m+mi*ofn+oi];
-
-    FLT_TYPE *dilw_p=&dilw[ci*m+mi];
-    FLT_TYPE *ditfeats_p=&ditfeats[ci*ofn*m+mi*ofn+oi];
-
-    (*ditfeats_p)=(*dotfeats_sum_p)*(*ilw_p);
-    atomicAdd(dilw_p,(*dotfeats_sum_p)*(*itfeats_p));
+    osfeats[ci*fd+fi]=igfeats_sum[pi*fd+fi];
 }
 
 
 template<typename FLT_TYPE,typename INT_TYPE>
-void locWFeatSumBackwardGPUV2(
-        FLT_TYPE *d_itfeats,              // [pn,n,m,ofn]
-        FLT_TYPE *d_ilw,                  // [pn,n,m]
-        FLT_TYPE *d_dotfeats_sum,         // [pn,m,ofn]
-        INT_TYPE *d_icidxs,                // [csum] inidxs_lens[i]=n
+void neighborSumFeatScatterGPU(
+        FLT_TYPE *d_igfeats_sum,            // [pn,fd]
+        INT_TYPE *d_icidxs,                 // [csum] inidxs_lens[i]=n
         INT_TYPE pn,
-        INT_TYPE ofn,
-        INT_TYPE m,
+        INT_TYPE fd,
         INT_TYPE csum,
-        FLT_TYPE *d_ditfeats,           // [pn,n,m,ofn]
-        FLT_TYPE *d_dilw                // [pn,n,m]
+        FLT_TYPE *d_osfeats                 // [csum,fd]
 )
 {
-    int tdim0,tdim1,tdim2;
-    int bdim0,bdim1,bdim2;
-
-    tdim2=64;
-    if(ofn<tdim2) tdim2=infTwoExp(ofn);
-    bdim2=ofn/tdim2;
-    if(ofn%tdim2>0) bdim2++;
+    int tdim0,tdim1,tdim2=1;
+    int bdim0,bdim1,bdim2=1;
 
     tdim1=1024/(tdim2);
-    if(m<tdim1) tdim1=infTwoExp(m);
-    bdim1=m/tdim1;
-    if(m%tdim1>0) bdim1++;
+    if(fd<tdim1) tdim1=infTwoExp(fd);
+    bdim1=fd/tdim1;
+    if(fd%tdim1>0) bdim1++;
 
     tdim0=1024/(tdim1*tdim2);
     if(csum<tdim0) tdim0=infTwoExp(csum);
@@ -132,14 +98,11 @@ void locWFeatSumBackwardGPUV2(
     dim3 block_dim(bdim0,bdim1,bdim2);
     dim3 thread_dim(tdim0,tdim1,tdim2);
 
-    //gpuErrchk(cudaMemset(d_ditfeats,0,csum*m*ofn*sizeof(FLT_TYPE)))
-    gpuErrchk(cudaMemset(d_dilw,0,csum*m*sizeof(FLT_TYPE)))
-    locationWeightFeatSumBackwardKernelV2<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>
-           (d_itfeats,d_ilw,d_dotfeats_sum,d_icidxs,ofn,m,csum,d_ditfeats,d_dilw);
+    sumFeatScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_igfeats_sum,d_icidxs,fd,csum,d_osfeats);
 }
 
 
-template void locWFeatSumForwardGPUV2<float,unsigned int>
-        (float*, float*, unsigned int*,unsigned int,unsigned int,unsigned int,unsigned int,float*);
-template void locWFeatSumBackwardGPUV2<float,unsigned int>
-        (float*,float*,float*,unsigned int*,unsigned int,unsigned int,unsigned int,unsigned int,float*,float*);
+template void neighborSumFeatGatherGPU<float,unsigned int>
+        (float*, unsigned int*,unsigned int,unsigned int,unsigned int,float*);
+template void neighborSumFeatScatterGPU<float,unsigned int>
+        (float*, unsigned int*,unsigned int,unsigned int,unsigned int,float*);

@@ -27,9 +27,9 @@ def _variable_on_cpu(name, shape, initializer, use_fp16=False):
 def compute_pfeats(lw,lw_sum,tfeats,nidxs_lens,nidxs_bgs,use_v2=False,cidxs=None):
     '''
 
-    :param lw:          [pn,n,m] csum=pn*n
+    :param lw:          [csum,m]
     :param lw_sum:      [pn,m]
-    :param tfeats:      [pn,n,m,ofn]
+    :param tfeats:      [csum,m,ofn]
     :param nidxs_lens:  [pn]
     :param nidxs_bgs:   [pn]
     :param use_v2:
@@ -38,8 +38,11 @@ def compute_pfeats(lw,lw_sum,tfeats,nidxs_lens,nidxs_bgs,use_v2=False,cidxs=None
     '''
     if use_v2:
         assert cidxs is not None
-        print 'use v2'
-        tfeats_sum=neighbor_ops.location_weight_feat_sum_v2(lw,tfeats,cidxs,nidxs_lens)
+        lw_exp=tf.tile(tf.expand_dims(lw,axis=2),[1,1,tf.shape(tfeats)[2]])     #[csum,m,ofn]
+        wtfeats=lw_exp*tfeats                                                   #[csum,m,ofn]
+        wtfeats=tf.reshape(wtfeats,[tf.shape(wtfeats)[0],-1])                   #[csum,m*ofn]
+        tfeats_sum=neighbor_ops.neighbor_sum_feat_gather(wtfeats, cidxs, nidxs_lens)
+        tfeats_sum=tf.reshape(tfeats_sum,[-1,tf.shape(tfeats)[1],tf.shape(tfeats)[2]])
     else:
         tfeats_sum=neighbor_ops.location_weight_feat_sum(lw,tfeats,nidxs_lens,nidxs_bgs)
 

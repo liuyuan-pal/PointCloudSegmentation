@@ -7,13 +7,13 @@ TF_LIB=$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_lib())')
 
 tf_forward_files="TFNeighborScatter.cc \
                   TFLocationWeightFeatSumForward.cc
-                  TFLocationWeightFeatSumForwardV2.cc
                   TFLocationWeightSumForward.cc
+                  TFNeighborSumFeatGather.cc
                  "
 tf_backward_files="TFNeighborGather.cc\
                   TFLocationWeightFeatSumBackward.cc
-                  TFLocationWeightFeatSumBackwardV2.cc
                   TFLocationWeightSumBackward.cc
+                  TFNeighborSumFeatScatter.cc
                   "
 
 echo ${tf_forward_files}
