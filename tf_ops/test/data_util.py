@@ -16,3 +16,12 @@ def compute_nidxs_bgs(nidxs_lens):
         nidxs_bgs[i]=csum
         csum+=lval
     return nidxs_bgs
+
+
+def compute_cidxs(nidxs_lens):
+    cidxs=[]
+    for i,lval in enumerate(nidxs_lens):
+        for _ in xrange(lval):
+            cidxs.append(i)
+
+    return np.asarray(cidxs,np.int32)

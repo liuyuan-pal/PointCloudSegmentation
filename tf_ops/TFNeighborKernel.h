@@ -5,6 +5,7 @@
 #ifndef POINTUTIL_TFNEIGHBORKERNEL_H
 #define POINTUTIL_TFNEIGHBORKERNEL_H
 
+
 template<typename FLT_TYPE,typename INT_TYPE>
 void neighborScatterGPU(
         FLT_TYPE *d_ifeats,          // [pn,ifn]
@@ -77,5 +78,33 @@ void locWSumBackwardGPU(
         INT_TYPE m,
         FLT_TYPE *d_dilw              // [pn,n,m]
 );
+
+
+template<typename FLT_TYPE,typename INT_TYPE>
+void locWFeatSumForwardGPUV2(
+        FLT_TYPE *d_itfeats,              // [pn,n,m,ofn]
+        FLT_TYPE *d_ilw,                  // [pn,n,m]
+        INT_TYPE *d_icidxs,               // [pn] inidxs_lens[i]=n
+        INT_TYPE pn,
+        INT_TYPE ofn,
+        INT_TYPE m,
+        INT_TYPE csum,
+        FLT_TYPE *d_otfeats_sum           // [pn,m,ofn]
+);
+
+template<typename FLT_TYPE,typename INT_TYPE>
+void locWFeatSumBackwardGPUV2(
+        FLT_TYPE *d_itfeats,              // [pn,n,m,ofn]
+        FLT_TYPE *d_ilw,                  // [pn,n,m]
+        FLT_TYPE *d_dotfeats_sum,         // [pn,m,ofn]
+        INT_TYPE *d_icidxs,                // [csum] inidxs_lens[i]=n
+        INT_TYPE pn,
+        INT_TYPE ofn,
+        INT_TYPE m,
+        INT_TYPE csum,
+        FLT_TYPE *d_ditfeats,           // [pn,n,m,ofn]
+        FLT_TYPE *d_dilw                // [pn,n,m]
+);
+
 
 #endif //POINTUTIL_TFNEIGHBORKERNEL_H

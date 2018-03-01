@@ -18,6 +18,12 @@ def _location_weight_feat_sum_gradient(op,dtfeats_sum):
     return [dlw,dfeats,None,None]
 
 
+@ops.RegisterGradient("LocationWeightFeatSumV2")
+def _location_weight_feat_sum_v2_gradient(op,dtfeats_sum):
+    dlw,dfeats=neighbor_ops.location_weight_feat_sum_backward_v2(op.inputs[0], op.inputs[1], dtfeats_sum, op.inputs[2])
+    return [dlw,dfeats,None,None]
+
+
 @ops.RegisterGradient("LocationWeightSum")
 def _location_weight_feat_sum_gradient(op,dlw_sum):
     dlw=neighbor_ops.location_weight_sum_backward(op.inputs[0], dlw_sum, op.inputs[1], op.inputs[2])

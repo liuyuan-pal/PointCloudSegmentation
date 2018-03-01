@@ -24,28 +24,29 @@ def neighbor_anchors():
     return np.asarray(pmiu)
 
 
-def conv_xyz_feats_model(xyz, feats, nidxs, nidxs_lens, nidxs_bgs,pmiu,dpfeats):
-    pfeats0,lw=graph_conv_xyz(xyz,nidxs,nidxs_lens,nidxs_bgs,'conv0',3,26,16,pmiu=pmiu)
+def conv_xyz_feats_model(xyz,feats,nidxs,nidxs_lens,nidxs_bgs,pmiu,dpfeats,cidxs):
+    pfeats0,lw,lw_sum=graph_conv_xyz(xyz,nidxs,nidxs_lens,nidxs_bgs,'conv0',3,26,16,compute_lw=True,pmiu=pmiu,use_v2=True,cidxs=cidxs)
     pfeats0=tf.concat([pfeats0,feats],axis=1)
-    pfeats1=graph_conv_feats(pfeats0,nidxs,nidxs_lens,nidxs_bgs,'conv1',19,26,32,lw=lw)
-    pfeats2=graph_conv_feats(pfeats1,nidxs,nidxs_lens,nidxs_bgs,'conv2',32,26,64,lw=lw)
-    pfeats=graph_conv_feats(pfeats2,nidxs,nidxs_lens,nidxs_bgs,'conv3',64,26,final_dims,lw=lw)
+    pfeats1=graph_conv_feats(pfeats0,nidxs,nidxs_lens,nidxs_bgs,'conv1',19,26,32,lw=lw,lw_sum=lw_sum,use_v2=True,cidxs=cidxs)
+    pfeats2=graph_conv_feats(pfeats1,nidxs,nidxs_lens,nidxs_bgs,'conv2',32,26,64,lw=lw,lw_sum=lw_sum,use_v2=True,cidxs=cidxs)
+    pfeats=graph_conv_feats(pfeats2,nidxs,nidxs_lens,nidxs_bgs,'conv3',64,26,final_dims,lw=lw,lw_sum=lw_sum,use_v2=True,cidxs=cidxs)
     print 'trainable vars:'
     for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES): print var
     grads=tf.gradients(pfeats,tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES),dpfeats)
     return pfeats,grads
 
 
-def eval_conv_xyz_feats(xyz, feats, nidxs, nidxs_lens, nidxs_bgs, pmiu, dpfeats):
+def eval_conv_xyz_feats(xyz, feats, nidxs, nidxs_lens, nidxs_bgs, pmiu, dpfeats, cidxs):
     xyz_pl=tf.placeholder(tf.float32,[None,3],'xyz')
     feats_pl=tf.placeholder(tf.float32,[None,3],'feats')
     nidxs_pl=tf.placeholder(tf.int32,[None],'nidxs')
     nidxs_lens_pl=tf.placeholder(tf.int32,[None],'nidxs_lens')
     nidxs_bgs_pl=tf.placeholder(tf.int32,[None],'nidxs_bgs')
+    cidxs_pl=tf.placeholder(tf.int32,[None],'cidxs')
     pmiu_pl=tf.placeholder(tf.float32,[3,26],'pmiu')
     dpfeats_pl=tf.placeholder(tf.float32,[None,final_dims],'pmiu')
 
-    pfeats,grads=conv_xyz_feats_model(xyz_pl, feats_pl, nidxs_pl, nidxs_lens_pl, nidxs_bgs_pl, pmiu_pl, dpfeats_pl)
+    pfeats,grads=conv_xyz_feats_model(xyz_pl, feats_pl, nidxs_pl, nidxs_lens_pl, nidxs_bgs_pl, pmiu_pl, dpfeats_pl,cidxs_pl)
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -70,6 +71,7 @@ def eval_conv_xyz_feats(xyz, feats, nidxs, nidxs_lens, nidxs_bgs, pmiu, dpfeats)
                     nidxs_bgs_pl: nidxs_bgs,
                     pmiu_pl: pmiu,
                     dpfeats_pl: dpfeats,
+                    cidxs_pl:cidxs
                 },options=run_options, run_metadata=run_metadata)
 
         # Create the Timeline object, and write it to a json
@@ -98,6 +100,7 @@ if __name__ == "__main__":
     nidxs=libPointUtil.findNeighborRadiusGPU(spts,0.1)
     nidxs_lens=np.asarray([len(idxs) for idxs in nidxs],dtype=np.int32)
     nidxs_bgs=compute_nidxs_bgs(nidxs_lens)
+    cidxs=compute_cidxs(nidxs_lens)
     nidxs=np.concatenate(nidxs,axis=0)
     print 'pn*n: {}'.format(nidxs.shape)
     print 'pn: {}'.format(nidxs_bgs.shape)
@@ -109,6 +112,6 @@ if __name__ == "__main__":
 
     dpfeats=np.random.uniform(-1.0,1.0,[pts.shape[0],final_dims])
     dpfeats=np.asarray(dpfeats,dtype=np.float32)
-    vals=eval_conv_xyz_feats(pts[:,:3],pts[:,3:],nidxs,nidxs_lens,nidxs_bgs,pmiu,dpfeats)
+    vals=eval_conv_xyz_feats(pts[:,:3],pts[:,3:],nidxs,nidxs_lens,nidxs_bgs,pmiu,dpfeats,cidxs)
 
 

@@ -1,19 +1,5 @@
-#include <cstring>
-#include <cstdio>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <cuda_runtime_api.h>
 #include "TFNeighborKernel.h"
-
-#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
-{
-    if (code != cudaSuccess)
-    {
-        fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-        if (abort) exit(code);
-    }
-}
+#include "TFCudaCommon.h"
 
 template<typename FLT_TYPE,typename INT_TYPE>
 __global__ void diffFeatScatter(
@@ -56,20 +42,20 @@ __global__ void featScatter(
         FLT_TYPE *onfeats                   // [pn*n,ifn]
 )
 {
-    int pi = threadIdx.y + blockIdx.y*blockDim.y;
-    if(pi>=pn) return;
+    int pi = threadIdx.x + blockIdx.x*blockDim.x;
+    int ii = threadIdx.y + blockIdx.y*blockDim.y;
+    if(pi>=pn||ii>=ifn) return;
     INT_TYPE nn_bg = inn_bgs[pi];
     INT_TYPE nn = inidxs_lens[pi];
 
+    FLT_TYPE *onfeats_p=&onfeats[nn_bg*ifn+ii];
     INT_TYPE *inidxs_p=&inidxs[nn_bg];
-    FLT_TYPE *onfeats_p=&onfeats[nn_bg*ifn];
     for(int ni=0;ni<nn;ni++)
     {
         INT_TYPE cur_nidx=(*inidxs_p);
-        FLT_TYPE* cifeats=&ifeats[cur_nidx*ifn];
-        std::memcpy(onfeats_p,cifeats,ifn*sizeof(FLT_TYPE));
-        inidxs_p++;
+        (*onfeats_p)=ifeats[cur_nidx*ifn+ii];
         onfeats_p+=ifn;
+        inidxs_p++;
     }
 }
 
@@ -86,19 +72,17 @@ __global__ void featGather(
         FLT_TYPE *ifeats               // [pn,ifn]
 )
 {
-    int pi = threadIdx.y + blockIdx.y*blockDim.y;
-    if(pi>=pn) return;
+    int pi = threadIdx.x + blockIdx.x*blockDim.x;
+    int ii = threadIdx.y + blockIdx.y*blockDim.y;
+    if(pi>=pn||ii>=ifn) return;
     INT_TYPE nn_bg = inn_bgs[pi];
     INT_TYPE nn = inidxs_lens[pi];
 
     INT_TYPE* inidxs_p=&(inidxs[nn_bg]);
-    FLT_TYPE* sfeats_p=&sfeats[nn_bg*ifn];
+    FLT_TYPE* sfeats_p=&sfeats[nn_bg*ifn+ii];
     for(int ni=0;ni<nn;ni++)
     {
-        FLT_TYPE* cifeats_p=&ifeats[(*inidxs_p)*ifn];
-        for(int ii=0;ii<ifn;ii++)
-            atomicAdd(&(cifeats_p[ii]),sfeats_p[ii]);
-
+        atomicAdd(&ifeats[(*inidxs_p)*ifn+ii],*sfeats_p);
         inidxs_p++;
         sfeats_p+=ifn;
     }
@@ -282,16 +266,35 @@ void neighborScatterGPU(
         bool use_diff                 // default false
 )
 {
-    int block_num=pn/1024;
-    if(pn%1024>0) block_num++;
-    dim3 block_dim(1,block_num);
-    dim3 thread_dim(1,1024);
 
     // scatter data to matrix
     if(use_diff)
+    {
+        int block_num=pn/1024;
+        if(pn%1024>0) block_num++;
+        dim3 block_dim(1,block_num);
+        dim3 thread_dim(1,1024);
         diffFeatScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_ifeats,d_inidxs,d_inn_bgs,d_inidxs_lens,pn,ifn,d_sfeats);
+    }
     else
+    {
+        int tdim0,tdim1,tdim2=1;
+        int bdim0,bdim1,bdim2=1;
+
+        tdim1=1024/(tdim2);
+        if(ifn<tdim1) tdim1=infTwoExp(ifn);
+        bdim1=ifn/tdim1;
+        if(ifn%tdim1>0) bdim1++;
+
+        tdim0=1024/(tdim1*tdim2);
+        if(pn<tdim0) tdim0=infTwoExp(pn);
+        bdim0=pn/tdim0;
+        if(pn%tdim0>0) bdim0++;
+
+        dim3 block_dim(bdim0,bdim1,bdim2);
+        dim3 thread_dim(tdim0,tdim1,tdim2);
         featScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_ifeats,d_inidxs,d_inn_bgs,d_inidxs_lens,pn,ifn,d_sfeats);
+    }
 }
 
 
@@ -307,30 +310,38 @@ void neighborGatherGPU(
         bool use_diff                 // default false
 )
 {
-    int block_num=pn/1024;
-    if(pn%1024>0) block_num++;
-    dim3 block_dim(1,block_num);
-    dim3 thread_dim(1,1024);
 
     gpuErrchk(cudaMemset(d_ifeats,0,pn*ifn*sizeof(FLT_TYPE)))
     // scatter data to matrix
     if(use_diff)
-        diffFeatGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>> (d_sfeats,d_inidxs,d_inn_bgs,d_inidxs_lens,pn,ifn,d_ifeats);
-    else
-        featGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>> (d_sfeats,d_inidxs,d_inn_bgs,d_inidxs_lens,pn,ifn,d_ifeats);
-}
-
-inline int infTwoExp(int val)
-{
-    int cval=val;
-    int inf=1;
-    while(cval>1)
     {
-        cval>>=1;
-        inf<<=1;
+        int block_num=pn/1024;
+        if(pn%1024>0) block_num++;
+        dim3 block_dim(1,block_num);
+        dim3 thread_dim(1,1024);
+        diffFeatGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>> (d_sfeats,d_inidxs,d_inn_bgs,d_inidxs_lens,pn,ifn,d_ifeats);
     }
-    if(val>inf) inf<<=1;
-    return inf;
+    else
+    {
+
+        int tdim0,tdim1,tdim2=1;
+        int bdim0,bdim1,bdim2=1;
+
+        tdim1=1024/(tdim2);
+        if(ifn<tdim1) tdim1=infTwoExp(ifn);
+        bdim1=ifn/tdim1;
+        if(ifn%tdim1>0) bdim1++;
+
+        tdim0=1024/(tdim1*tdim2);
+        if(pn<tdim0) tdim0=infTwoExp(pn);
+        bdim0=pn/tdim0;
+        if(pn%tdim0>0) bdim0++;
+
+        dim3 block_dim(bdim0,bdim1,bdim2);
+        dim3 thread_dim(tdim0,tdim1,tdim2);
+
+        featGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>> (d_sfeats,d_inidxs,d_inn_bgs,d_inidxs_lens,pn,ifn,d_ifeats);
+    }
 }
 
 template<typename FLT_TYPE,typename INT_TYPE>
@@ -363,9 +374,6 @@ void locWFeatSumForwardGPU(
     bdim0=pn/tdim0;
     if(pn%tdim0>0) bdim0++;
 
-    printf("pn %d %d %d\n",pn,m,ofn);
-    printf("t %d %d %d\n",tdim0,tdim1,tdim2);
-    printf("b %d %d %d\n",bdim0,bdim1,bdim2);
     dim3 block_dim(bdim0,bdim1,bdim2);
     dim3 thread_dim(tdim0,tdim1,tdim2);
 
