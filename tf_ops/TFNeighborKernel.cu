@@ -213,6 +213,7 @@ __global__ void locationWeightFeatSumForwardKernel(
     int oi = threadIdx.z + blockIdx.z*blockDim.z;
 //    printf("here %d %d %d\n",mi,oi,pi);
     if(pi>=pn||mi>=m||oi>=ofn) return;
+//    printf("here %d %d %d\n",mi,oi,pi);
 
     INT_TYPE nn_bg = inn_bgs[pi];
     INT_TYPE nn = inidxs_lens[pi];
@@ -328,6 +329,7 @@ inline int infTwoExp(int val)
         cval>>=1;
         inf<<=1;
     }
+    if(val>inf) inf<<=1;
     return inf;
 }
 
@@ -361,6 +363,9 @@ void locWFeatSumForwardGPU(
     bdim0=pn/tdim0;
     if(pn%tdim0>0) bdim0++;
 
+    printf("pn %d %d %d\n",pn,m,ofn);
+    printf("t %d %d %d\n",tdim0,tdim1,tdim2);
+    printf("b %d %d %d\n",bdim0,bdim1,bdim2);
     dim3 block_dim(bdim0,bdim1,bdim2);
     dim3 thread_dim(tdim0,tdim1,tdim2);
 
