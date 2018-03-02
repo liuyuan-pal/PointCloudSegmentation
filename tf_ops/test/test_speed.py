@@ -28,8 +28,8 @@ def conv_xyz_feats_model(xyz,feats,nidxs,nidxs_lens,nidxs_bgs,pmiu,dpfeats,cidxs
     pfeats0,lw,lw_sum=graph_conv_xyz(xyz,nidxs,nidxs_lens,nidxs_bgs,'conv0',3,26,16,compute_lw=True,pmiu=pmiu,use_v2=True,cidxs=cidxs)
     pfeats0=tf.concat([pfeats0,feats],axis=1)
     pfeats1=graph_conv_feats(pfeats0,nidxs,nidxs_lens,nidxs_bgs,'conv1',19,26,32,lw=lw,lw_sum=lw_sum,use_v2=True,cidxs=cidxs)
-    pfeats2=graph_conv_feats(pfeats1,nidxs,nidxs_lens,nidxs_bgs,'conv2',32,26,64,lw=lw,lw_sum=lw_sum,use_v2=True,cidxs=cidxs)
-    pfeats=graph_conv_feats(pfeats2,nidxs,nidxs_lens,nidxs_bgs,'conv3',64,26,final_dims,lw=lw,lw_sum=lw_sum,use_v2=True,cidxs=cidxs)
+    pfeats2=graph_conv_feats(pfeats1,nidxs,nidxs_lens,nidxs_bgs,'conv2',32,26,32,lw=lw,lw_sum=lw_sum,use_v2=True,cidxs=cidxs)
+    pfeats=graph_conv_feats(pfeats2,nidxs,nidxs_lens,nidxs_bgs,'conv3',32,26,final_dims,lw=lw,lw_sum=lw_sum,use_v2=True,cidxs=cidxs)
     print 'trainable vars:'
     for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES): print var
     grads=tf.gradients(pfeats,tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES),dpfeats)
@@ -61,7 +61,7 @@ def eval_conv_xyz_feats(xyz, feats, nidxs, nidxs_lens, nidxs_bgs, pmiu, dpfeats,
         eval_pls+=grads
         for pl in eval_pls: print pl
         begin=time.time()
-        for i in xrange(10):
+        for i in xrange(100):
             vals=sess.run(
                 eval_pls, feed_dict={
                     xyz_pl: xyz,
@@ -80,7 +80,7 @@ def eval_conv_xyz_feats(xyz, feats, nidxs, nidxs_lens, nidxs_bgs, pmiu, dpfeats,
         with open('timeline3.json', 'w') as f:
             f.write(ctf)
 
-        print 'cost {} s'.format((time.time()-begin)/10)
+        print 'cost {} s'.format((time.time()-begin)/100)
 
     return vals
 
@@ -93,11 +93,11 @@ if __name__ == "__main__":
     block_idxs=libPointUtil.sampleRotatedBlockGPU(pts,1.5,3.0,0.0)
     block_idxs=[idxs for idxs in block_idxs if len(idxs)>2048]
     print 'mean block pt_num: {}'.format(np.mean(np.asarray([len(idxs) for idxs in block_idxs])))
-    # bid=np.random.randint(0,len(block_idxs))
-    pts=pts[block_idxs[0],:]
+    bid=np.random.randint(0,len(block_idxs))
+    pts=pts[block_idxs[bid],:]
 
     spts=np.ascontiguousarray(pts[:,:3])
-    nidxs=libPointUtil.findNeighborRadiusGPU(spts,0.1)
+    nidxs=libPointUtil.findNeighborRadiusGPU(spts,0.08)
     nidxs_lens=np.asarray([len(idxs) for idxs in nidxs],dtype=np.int32)
     nidxs_bgs=compute_nidxs_bgs(nidxs_lens)
     cidxs=compute_cidxs(nidxs_lens)

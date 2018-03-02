@@ -74,6 +74,7 @@ class Provider(threading.Thread):
                 self.slots.acquire()
                 self.mutex.acquire()
                 if self.thread_end.is_set():
+                    # print 'set'
                     exit(0)
 
                 self.data_cache.append(self.read_fn(model, self.file_list[idx]))

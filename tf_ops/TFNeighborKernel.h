@@ -84,7 +84,8 @@ void locWSumBackwardGPU(
 template<typename FLT_TYPE,typename INT_TYPE>
 void neighborSumFeatGatherGPU(
         FLT_TYPE *d_ifeats,               // [csum,fd]
-        INT_TYPE *d_icidxs,               // [csum]
+        INT_TYPE *d_nidxs_lens,           // [pn]
+        INT_TYPE *d_nidxs_bgs,            // [pn]
         INT_TYPE pn,
         INT_TYPE fd,
         INT_TYPE csum,
