@@ -64,8 +64,7 @@ class Provider(threading.Thread):
         self.done = False
 
         self.start()
-
-        self.request_data()
+        self.cur_data=None
 
     def run(self):
         model = self.model
@@ -85,26 +84,37 @@ class Provider(threading.Thread):
                 random.shuffle(self.indices)
 
     def request_data(self):
-        if self.file_cur >= self.file_len:
-            self.cur_data = None
-            return
+        '''
+        fetch data
+        save data in cur_data cur_indices data_index
+        :return: success or not
+        '''
+        file_data=[[]]
+        while len(file_data[0])==0:
+            if self.file_cur >= self.file_len:
+                self.cur_data = None
+                return False
 
-        self.items.acquire()
-        self.mutex.acquire()
-        file_data = self.data_cache.pop(0)
-        self.mutex.release()
-        self.slots.release()
+            self.items.acquire()
+            self.mutex.acquire()
+            file_data = self.data_cache.pop(0)
+            self.mutex.release()
+            self.slots.release()
 
-        self.file_cur += 1
+            self.file_cur += 1
 
-        self.cur_data = file_data
+        self.cur_data=file_data
         if self.cur_data is not None:
             self.cur_data_index = 0
             self.cur_indices = range(len(self.cur_data[0]))
             if self.model == 'train':
                 random.shuffle(self.cur_indices)
+            return True
+
+        return False
 
     def reset(self):
+        self.done=False
         self.file_cur = 0
 
     def close(self):
@@ -116,10 +126,12 @@ class Provider(threading.Thread):
 
     def next(self):
         if self.done:
-            self.done = False
             self.reset()
-            self.request_data()
             raise StopIteration
+
+        if self.cur_data is None:
+            if not self.request_data():
+                raise StopIteration
 
         batch_data, actual_size = self.batch_fn(self.cur_data, self.cur_data_index, self.cur_indices,self.batch_size)
 
@@ -128,11 +140,8 @@ class Provider(threading.Thread):
         left_size = self.batch_size - actual_size
 
         while self.cur_data_index >= len(self.cur_data[0]):     # reach end file batch, left_size>0 is possible
-            self.request_data()
-
-            # no data available
-            if self.cur_data is None:
-                self.done = True
+            if not self.request_data():
+                self.done=True
                 break
 
             # data available and we still need to sample

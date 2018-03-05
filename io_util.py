@@ -42,21 +42,31 @@ def get_block_train_test_split(test_area=5):
     return train, test
 
 
+def get_class_names():
+    names=[]
+    path=os.path.split(os.path.realpath(__file__))[0]
+    with open(path+'/cached/class_names.txt','r') as f:
+        for line in f.readlines():
+            names.append(line.strip('\n'))
+
+    return names
+
+
 def read_fn(model,filename):
     points,labels=read_room_pkl(filename) # [n,6],[n,1]
     if model=='train':
         xyzs, rgbs, covars, lbls=sample_block(points,labels,SAMPLE_STRIDE,BLOCK_SIZE,BLOCK_STRIDE,min_pn=MIN_POINT_NUM,
-                                              use_rescale=True,use_flip=True,use_rotate=True)
+                                              use_rescale=True,use_flip=True,use_rotate=False)
 
-        xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs = \
+        xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs, block_bgs, block_lens = \
             normalize_block(xyzs,rgbs,covars,lbls,neighbor_radius=NEIGHBOR_RADIUS,resample=True,jitter_color=True,
                             resample_low=RESAMPLE_RATIO_LOW,resample_high=RESAMPLE_RATIO_HIGH)
     else:
         xyzs, rgbs, covars, lbls=sample_block(points,labels,SAMPLE_STRIDE,BLOCK_SIZE,BLOCK_SIZE,min_pn=MIN_POINT_NUM/2)
-        xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs = \
+        xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs, block_bgs, block_lens = \
             normalize_block(xyzs,rgbs,covars,lbls,neighbor_radius=NEIGHBOR_RADIUS)
 
-    return xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs
+    return xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs, block_bgs, block_lens
 
 
 def test_data_iter():
@@ -67,13 +77,20 @@ def test_data_iter():
 
     train_list,test_list=get_block_train_test_split()
     random.shuffle(train_list)
-    print len(train_list)
     train_list=['data/S3DIS/room_block_10_10/'+fn for fn in train_list]
     test_list=['data/S3DIS/room_block_10_10/'+fn for fn in test_list]
 
     train_provider = Provider(train_list,'train',4,read_fn)
-    test_provider = Provider(train_list,'test',4,read_fn)
+    test_provider = Provider(test_list,'test',4,read_fn)
+    print len(train_list)
     try:
+        begin=time.time()
+        i=0
+        for data in test_provider:
+            i+=1
+            pass
+        print 'batch_num {}'.format(i*4)
+        print 'test set cost {} s'.format(time.time()-begin)
         begin=time.time()
         i=0
         for data in train_provider:
@@ -82,13 +99,11 @@ def test_data_iter():
         print 'batch_num {}'.format(i*4)
         print 'train set cost {} s'.format(time.time()-begin)
 
-        for data in test_provider:
-            pass
-        print 'test set cost {} s'.format(time.time()-begin)
 
     finally:
         print 'done'
         train_provider.close()
+        test_provider.close()
 
 
 def test_sample():

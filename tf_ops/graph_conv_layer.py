@@ -91,8 +91,7 @@ def graph_conv_xyz_impl(xyz,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,
     return pfeats,lw,lw_sum
 
 
-def graph_conv_feats_impl(feats,nidxs,nidxs_lens,nidxs_bgs,pw,lw,lw_sum,
-                          use_v2=False,cidxs=None):
+def graph_conv_feats_impl(feats,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,lw,lw_sum):
 
     pw_reshape=tf.reshape(pw,[tf.shape(pw)[0],-1])  # [ifn,m*ofn]
     tfeats=tf.matmul(feats,pw_reshape)              # [pn,m*ofn]
@@ -117,20 +116,21 @@ def graph_conv_xyz_feats(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, 
         if use_bias:
             bias=_variable_on_cpu('bias',[ofn],tf.zeros_initializer())
 
-    pfeats,lw_,lw_sum_=graph_conv_xyz_feats_impl(xyz,feats,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,compute_lw,lw,lw_sum,pmiu)
+    with tf.name_scope(name):
+        pfeats,lw_,lw_sum_=graph_conv_xyz_feats_impl(xyz,feats,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,compute_lw,lw,lw_sum,pmiu)
 
-    if use_bias:
-        pfeats=tf.add(pfeats,tf.expand_dims(bias,axis=0))
+        if use_bias:
+            pfeats=tf.add(pfeats,tf.expand_dims(bias,axis=0))
 
-    if activation_fn is not None:
-        pfeats=activation_fn(pfeats)
+        if activation_fn is not None:
+            pfeats=activation_fn(pfeats)
 
-    if compute_lw:
-        lw=lw_
-        lw_sum=lw_sum_
-        return pfeats,lw,lw_sum
-    else:
-        return pfeats
+        if compute_lw:
+            lw=lw_
+            lw_sum=lw_sum_
+            return pfeats,lw,lw_sum
+        else:
+            return pfeats
 
 
 def graph_conv_xyz(xyz, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, ofn,
@@ -145,20 +145,21 @@ def graph_conv_xyz(xyz, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, ofn,
         if use_bias:
             bias=_variable_on_cpu('bias',[ofn],tf.zeros_initializer())
 
-    pfeats,lw_,lw_sum_=graph_conv_xyz_impl(xyz,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,compute_lw,lw,lw_sum,pmiu)
+    with tf.name_scope(name):
+        pfeats,lw_,lw_sum_=graph_conv_xyz_impl(xyz,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,compute_lw,lw,lw_sum,pmiu)
 
-    if use_bias:
-        pfeats=tf.add(pfeats,tf.expand_dims(bias,axis=0))
+        if use_bias:
+            pfeats=tf.add(pfeats,tf.expand_dims(bias,axis=0))
 
-    if activation_fn is not None:
-        pfeats=activation_fn(pfeats)
+        if activation_fn is not None:
+            pfeats=activation_fn(pfeats)
 
-    if compute_lw:
-        lw=lw_
-        lw_sum=lw_sum_
-        return pfeats,lw,lw_sum
-    else:
-        return pfeats
+        if compute_lw:
+            lw=lw_
+            lw_sum=lw_sum_
+            return pfeats,lw,lw_sum
+        else:
+            return pfeats
 
 
 def graph_conv_feats(feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, ofn, lw, lw_sum,
@@ -171,12 +172,13 @@ def graph_conv_feats(feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, o
         if use_bias:
             bias=_variable_on_cpu('bias',[ofn],tf.zeros_initializer())
 
-    pfeats=graph_conv_feats_impl(feats,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,lw,lw_sum)
+    with tf.name_scope(name):
+        pfeats=graph_conv_feats_impl(feats,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,lw,lw_sum)
 
-    if use_bias:
-        pfeats=tf.add(pfeats,tf.expand_dims(bias,axis=0))
+        if use_bias:
+            pfeats=tf.add(pfeats,tf.expand_dims(bias,axis=0))
 
-    if activation_fn is not None:
-        pfeats=activation_fn(pfeats)
+        if activation_fn is not None:
+            pfeats=activation_fn(pfeats)
 
     return pfeats

@@ -233,6 +233,7 @@ def normalize_block(xyzs,rgbs,covars,lbls,neighbor_radius=0.1,
     # import time
     bn=len(xyzs)
     nidxs,nidxs_lens,nidxs_bgs,cidxs=[],[],[],[]
+    block_bgs,block_lens=[],[]
     # t1,t2,t3,t4,t5=0,0,0,0,0
     for bid in xrange(bn):
         # t=time.time()
@@ -253,7 +254,10 @@ def normalize_block(xyzs,rgbs,covars,lbls,neighbor_radius=0.1,
 
         # t=time.time()
         append([nidxs,nidxs_lens,nidxs_bgs,cidxs],[nidx, nidxs_len, nidxs_bg, cidx])
+
+        block_bgs.append(np.min(xyzs[bid],axis=0))
         xyzs[bid]-=np.min(xyzs[bid],axis=0,keepdims=True)
+        block_lens.append(np.max(xyzs[bid],axis=0))
         xyzs[bid][:,:2]-=1.5    # [-1.5,1.5]
         xyzs[bid][:,:2]/=1.5    # [-1,1]
         xyzs[bid][:,2]/=np.max(xyzs[bid][:,2],axis=0,keepdims=True)/2.0 # [0,2]
@@ -279,7 +283,7 @@ def normalize_block(xyzs,rgbs,covars,lbls,neighbor_radius=0.1,
         # t5+=time.time()-t
 
     # print 'cost {} {} {} {} {} s'.format(t1/bn,t2/bn,t3/bn,t4/bn,t5/bn)
-    return xyzs,rgbs,covars,lbls,nidxs,nidxs_lens,nidxs_bgs,cidxs
+    return xyzs,rgbs,covars,lbls,nidxs,nidxs_lens,nidxs_bgs,cidxs,block_bgs,block_lens
 
 
 def normalize_single_block(xyzs,rgbs,lbls,neighbor_radius=0.1,
