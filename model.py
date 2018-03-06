@@ -2,6 +2,17 @@ from tf_ops.graph_conv_layer import *
 import tensorflow.contrib.framework as framework
 
 
+def variable_summaries(var,name):
+    """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
+    with tf.name_scope('{}_summaries'.format(name)):
+        mean = tf.reduce_mean(var)
+        tf.summary.scalar('mean'.format(name), mean)
+        with tf.name_scope('{}_stddev'.format(name)):
+            stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+        tf.summary.scalar('{}_stddev'.format(name), stddev)
+        tf.summary.histogram('{}_histogram'.format(name), var)
+
+
 def graph_conv_net_v1(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu=None, reuse=False, final_dim=512):
     '''
     :param xyz:     [pn,3] xyz
@@ -93,7 +104,7 @@ def graph_conv_net_v2(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu=N
     return fc6_reduce, fc6, fc3
 
 
-def graph_conv_net_v3(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu=None, reuse=False, final_dim=512):
+def graph_conv_net_v3(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu=None, reuse=False, final_dim=512, num_monitor=False):
     '''
     :param xyz:     [pn,3] xyz
     :param feats:   [pn,9] rgb+covars
@@ -110,46 +121,62 @@ def graph_conv_net_v3(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu=N
         with framework.arg_scope([tf.contrib.layers.fully_connected],activation_fn=tf.nn.relu,reuse=reuse):
             with tf.name_scope('gc_xyz'):
                 xyz_gc,lw,lw_sum=graph_conv_xyz(xyz,cidxs,nidxs,nidxs_lens,nidxs_bgs,'xyz_gc',3,m,16,compute_lw=True,pmiu=pmiu)
+                if num_monitor:
+                    variable_summaries(xyz_gc,'xyz_gc')
                 sfeats=tf.concat([xyz_gc,feats],axis=1)
 
             with tf.name_scope('gc_fc1'):
                 gc1=graph_conv_feats(sfeats,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc1',16+12,m,16,lw,lw_sum)    # 28
+                if num_monitor:
+                    variable_summaries(gc1,'gc1')
                 gc1=tf.concat([gc1,sfeats],axis=1)  # 16+28
                 fc1=tf.contrib.layers.fully_connected(gc1, num_outputs=32, scope='fc1')
                 fc1=tf.concat([fc1,sfeats], axis=1)
 
             with tf.name_scope('gc_fc2'):
                 gc2=graph_conv_feats(fc1,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc2',32+16+12,m,16,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc2,'gc2')
                 gc2=tf.concat([gc2, fc1], axis=1)
                 fc2=tf.contrib.layers.fully_connected(gc2, num_outputs=32, scope='fc2')
                 fc2=tf.concat([fc2, fc1], axis=1)
 
             with tf.name_scope('gc_fc3'):
                 gc3=graph_conv_feats(fc2,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc3',32*2+16+12,m,16,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc3,'gc3')
                 gc3=tf.concat([gc3, fc2], axis=1)
                 fc3=tf.contrib.layers.fully_connected(gc3, num_outputs=32, scope='fc3')
                 fc3=tf.concat([fc3, fc2], axis=1)
 
             with tf.name_scope('gc_fc4'):
                 gc4=graph_conv_feats(fc3,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc4',32*3+16+12,m,32,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc4,'gc4')
                 gc4=tf.concat([gc4, fc3], axis=1)
                 fc4=tf.contrib.layers.fully_connected(gc4, num_outputs=32, scope='fc4')
                 fc4=tf.concat([fc4, fc3], axis=1)
 
             with tf.name_scope('gc_fc5'):
                 gc5=graph_conv_feats(fc4,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc5',32*4+16+12,m,32,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc5,'gc5')
                 gc5=tf.concat([gc5, fc4], axis=1)
                 fc5=tf.contrib.layers.fully_connected(gc5, num_outputs=32, scope='fc5')
                 fc5=tf.concat([fc5, fc4], axis=1)
 
             with tf.name_scope('gc_fc6'):
                 gc6=graph_conv_feats(fc5,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc6',32*5+16+12,m,32,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc6,'gc6')
                 gc6=tf.concat([gc6, fc5], axis=1)
                 fc6=tf.contrib.layers.fully_connected(gc6, num_outputs=32, scope='fc6')
                 fc6=tf.concat([fc6, fc5], axis=1)
 
             with tf.name_scope('gc_fc7'):
                 gc7=graph_conv_feats(fc6,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc7',32*6+16+12,m,64,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc7,'gc7')
                 gc7=tf.concat([gc7, fc6], axis=1)
                 fc7=tf.contrib.layers.fully_connected(gc7, num_outputs=64, scope='fc7')
                 fc7=tf.concat([fc7, fc6], axis=1)       # 64+32*6+16+12=284
@@ -157,12 +184,120 @@ def graph_conv_net_v3(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu=N
             with tf.name_scope('fc_global'):
                 fc7_xyz=tf.concat([fc7, xyz],axis=1)
                 fc8=tf.contrib.layers.fully_connected(fc7_xyz,num_outputs=256,scope='fc8')
+                if num_monitor:
+                    variable_summaries(fc8,'fc8')
                 fc9=tf.contrib.layers.fully_connected(fc8,num_outputs=256,scope='fc9')
+                if num_monitor:
+                    variable_summaries(fc9,'fc9')
                 fc10=tf.contrib.layers.fully_connected(fc9,num_outputs=final_dim,scope='fc10',activation_fn=None)
+                if num_monitor:
+                    variable_summaries(fc10,'fc10')
 
         fc10_reduce = tf.reduce_max(fc10, axis=0)
 
     return fc10_reduce, fc10, fc7
+
+
+def graph_conv_net_v4(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu=None, reuse=False, final_dim=512, num_monitor=False):
+    '''
+    :param xyz:     [pn,3] xyz
+    :param feats:   [pn,9] rgb+covars
+    :param cidxs:
+    :param nidxs:
+    :param nidxs_lens:
+    :param nidxs_bgs:
+    :param reuse:
+    :param trainable:
+    :param final_dim:
+    :return:
+    '''
+    with tf.name_scope('encoder'):
+        with framework.arg_scope([tf.contrib.layers.fully_connected],activation_fn=tf.nn.relu,reuse=reuse):
+            with tf.name_scope('gc_xyz'):
+                xyz_gc,lw,lw_sum=graph_conv_xyz(xyz,cidxs,nidxs,nidxs_lens,nidxs_bgs,'xyz_gc',3,m,16,compute_lw=True,pmiu=pmiu)
+                if num_monitor:
+                    variable_summaries(xyz_gc,'xyz_gc')
+                sfeats=tf.concat([xyz_gc,feats],axis=1)
+
+            with tf.name_scope('gc_fc1'):
+                gc1=graph_conv_feats(sfeats,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc1',16+12,m,16,lw,lw_sum)    # 28
+                if num_monitor:
+                    variable_summaries(gc1,'gc1')
+                gc1=tf.concat([gc1,sfeats],axis=1)  # 16+28
+                fc1=tf.contrib.layers.fully_connected(gc1, num_outputs=32, scope='fc1')
+                fc1=tf.concat([fc1,sfeats], axis=1)
+
+            with tf.name_scope('gc_fc2'):
+                gc2=graph_conv_feats(fc1,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc2',32+16+12,m,16,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc2,'gc2')
+                gc2=tf.concat([gc2, fc1], axis=1)
+                fc2=tf.contrib.layers.fully_connected(gc2, num_outputs=32, scope='fc2')
+                fc2=tf.concat([fc2, fc1], axis=1)
+
+            with tf.name_scope('gc_fc3'):
+                gc3=graph_conv_feats(fc2,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc3',32*2+16+12,m,16,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc3,'gc3')
+                gc3=tf.concat([gc3, fc2], axis=1)
+                fc3=tf.contrib.layers.fully_connected(gc3, num_outputs=32, scope='fc3')
+                fc3=tf.concat([fc3, fc2], axis=1)
+
+            with tf.name_scope('gc_fc4'):
+                gc4=graph_conv_feats(fc3,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc4',32*3+16+12,m,32,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc4,'gc4')
+                gc4=tf.concat([gc4, fc3], axis=1)
+                fc4=tf.contrib.layers.fully_connected(gc4, num_outputs=32, scope='fc4')
+                fc4=tf.concat([fc4, fc3], axis=1)
+
+            with tf.name_scope('gc_fc5'):
+                gc5=graph_conv_feats(fc4,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc5',32*4+16+12,m,32,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc5,'gc5')
+                gc5=tf.concat([gc5, fc4], axis=1)
+                fc5=tf.contrib.layers.fully_connected(gc5, num_outputs=32, scope='fc5')
+                fc5=tf.concat([fc5, fc4], axis=1)
+
+            with tf.name_scope('gc_fc6'):
+                gc6=graph_conv_feats(fc5,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc6',32*5+16+12,m,32,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc6,'gc6')
+                gc6=tf.concat([gc6, fc5], axis=1)
+                fc6=tf.contrib.layers.fully_connected(gc6, num_outputs=32, scope='fc6')
+                fc6=tf.concat([fc6, fc5], axis=1)
+
+            with tf.name_scope('gc_fc7'):
+                gc7=graph_conv_feats(fc6,cidxs,nidxs,nidxs_lens,nidxs_bgs,'gc7',32*6+16+12,m,64,lw,lw_sum)
+                if num_monitor:
+                    variable_summaries(gc7,'gc7')
+                gc7=tf.concat([gc7, fc6], axis=1)
+                fc7=tf.contrib.layers.fully_connected(gc7, num_outputs=64, scope='fc7')
+                fc7=tf.concat([fc7, fc6], axis=1)       # 64+32*6+16+12=284
+
+            with tf.name_scope('fc_global'):
+                fc7_xyz=tf.concat([fc7, xyz],axis=1)
+                fc8=tf.contrib.layers.fully_connected(fc7_xyz,num_outputs=128,scope='fc8')
+                if num_monitor:  variable_summaries(fc8,'fc8')
+                fc8=tf.concat([fc8,fc7_xyz],axis=1)
+
+                fc9=tf.contrib.layers.fully_connected(fc8,num_outputs=128,scope='fc9')
+                if num_monitor:  variable_summaries(fc9,'fc9')
+                fc9=tf.concat([fc9,fc7_xyz],axis=1)
+
+                fc10=tf.contrib.layers.fully_connected(fc9,num_outputs=256,scope='fc10')
+                if num_monitor:  variable_summaries(fc10,'fc10')
+                fc10=tf.concat([fc10,fc7_xyz],axis=1)
+
+                fc11=tf.contrib.layers.fully_connected(fc10,num_outputs=256,scope='fc11')
+                if num_monitor:  variable_summaries(fc11,'fc11')
+                fc11=tf.concat([fc11,fc7_xyz],axis=1)
+
+                fc12=tf.contrib.layers.fully_connected(fc11,num_outputs=final_dim,scope='fc12')
+
+            fc12_reduce = tf.reduce_max(fc12, axis=0)
+
+    return fc12_reduce, fc12, fc7
 
 
 

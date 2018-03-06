@@ -4,7 +4,7 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model import graph_conv_net_v2,classifier
+from model import graph_conv_net_v4,classifier
 from train_util import *
 from io_util import get_block_train_test_split,read_fn,get_class_names
 from draw_util import get_class_colors,output_points
@@ -33,6 +33,7 @@ parser.add_argument('--log_file', type=str, default='s3dis_graph.log', help='')
 parser.add_argument('--eval',type=bool, default=False, help='')
 parser.add_argument('--eval_model',type=str, default='model/label/unsupervise80.ckpt',help='')
 parser.add_argument('--eval_output',type=bool, default=True,help='')
+parser.add_argument('--num_monitor', type=bool, default=False, help='')
 
 parser.add_argument('--train_epoch_num', type=int, default=500, help='')
 
@@ -43,8 +44,8 @@ def tower_loss(xyz,feats,labels,cidxs,nidxs,nidxs_lens,nidxs_bgs,m,
                is_training,reuse=False,pmiu=None):
 
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
-        global_feats,global_pfeats,local_pfeats=\
-            graph_conv_net_v2(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, reuse, 1024)
+        global_feats,global_pfeats,local_pfeats= \
+            graph_conv_net_v4(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, reuse, 1024, num_monitor=FLAGS.num_monitor)
 
         global_feats=tf.expand_dims(global_feats,axis=0)    # [1,1024]
         k=tf.shape(global_pfeats)[0]
@@ -98,8 +99,7 @@ def train_ops(xyz, rgbs, covars, labels, cidxs, nidxs, nidxs_lens, nidxs_bgs, m,
                     tower_losses.append(loss)
                     tower_logits.append(tf.squeeze(logits,axis=0))
                     update_op = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-                    for g in grad:
-                        print g
+                    summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
                     reuse=True
 
         avg_grad=average_gradients(tower_grads)
@@ -107,7 +107,6 @@ def train_ops(xyz, rgbs, covars, labels, cidxs, nidxs, nidxs_lens, nidxs_bgs, m,
         with tf.control_dependencies(update_op):
             apply_grad_op=tf.group(opt.apply_gradients(avg_grad,global_step=global_step))
 
-        summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
         summary_op = tf.summary.merge(summaries)
 
         total_loss_op=tf.add_n(tower_losses)/FLAGS.num_gpus
@@ -142,10 +141,6 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
         xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs, block_bgs, block_lens=\
             default_unpack_feats_labels(feed_in,FLAGS.num_gpus)
 
-        with open('test.log', 'a') as f:
-            f.write('xyzs lens {}\t'.format(len(xyzs)))
-            f.write('rgbs lens {}\t'.format(len(xyzs)))
-            f.write('xyzs lens {}\t'.format(len(xyzs)))
         for k in xrange(FLAGS.num_gpus):
             feed_dict[pls['xyzs'][k]]=xyzs[k]
             feed_dict[pls['rgbs'][k]]=rgbs[k]
@@ -183,7 +178,7 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
     log_str('epoch {} cost {} s'.format(epoch_num, time.time()-epoch_begin), FLAGS.log_file)
 
 
-def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict):
+def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer=None):
     begin_time=time.time()
     test_loss=[]
     all_preds,all_labels=[],[]
@@ -205,7 +200,11 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict):
 
         feed_dict[pls['is_training']] = False
 
-        loss,preds=sess.run([ops['total_loss'],ops['preds']],feed_dict)
+        if FLAGS.num_monitor:
+            loss,preds,summary=sess.run([ops['total_loss'],ops['preds'],ops['summary']],feed_dict)
+            summary_writer.add_summary(summary)
+        else:
+            loss,preds=sess.run([ops['total_loss'],ops['preds']],feed_dict)
         test_loss.append(loss)
         all_preds.append(preds)
 
@@ -221,6 +220,9 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict):
                 output_points('test_result/{}_{}_true.txt'.format(i,k),restore_xyzs,colors[lbls[k],:])
                 output_points('test_result/{}_{}_pred.txt'.format(i,k),restore_xyzs,colors[preds[cur:cur+len(xyzs[k])],:])
                 cur+=len(xyzs[k])
+
+        if FLAGS.eval and FLAGS.num_monitor and i>=2:
+            break
 
     all_preds=np.concatenate(all_preds,axis=0)
     all_labels=np.concatenate(all_labels,axis=0)
@@ -254,7 +256,7 @@ def neighbor_anchors_v2():
 
     pmiu.append(np.asarray([0,0,1.0]))
     pmiu.append(np.asarray([0,0,-1.0]))
-    return np.asarray(pmiu)
+    return np.asarray(pmiu).transpose()
 
 
 def neighbor_anchors():
@@ -293,7 +295,7 @@ def train():
             pls['nidxs_bgs'].append(tf.placeholder(tf.int32,[None],'nidxs_bgs{}'.format(i)))
             pls['cidxs'].append(tf.placeholder(tf.int32,[None],'cidxs{}'.format(i)))
 
-        pmiu=neighbor_anchors()
+        pmiu=neighbor_anchors_v2()
         pls['is_training']=tf.placeholder(tf.bool,name='is_training')
         pls['pmiu']=tf.placeholder(tf.float32,name='pmiu')
 
@@ -346,7 +348,7 @@ def eval():
             pls['nidxs_bgs'].append(tf.placeholder(tf.int32,[None],'nidxs_bgs{}'.format(i)))
             pls['cidxs'].append(tf.placeholder(tf.int32,[None],'cidxs{}'.format(i)))
 
-        pmiu=neighbor_anchors()
+        pmiu=neighbor_anchors_v2()
         pls['is_training']=tf.placeholder(tf.bool,name='is_training')
         pls['pmiu']=tf.placeholder(tf.float32,name='pmiu')
 
@@ -365,7 +367,8 @@ def eval():
 
         saver = tf.train.Saver(max_to_keep=500)
         saver.restore(sess,FLAGS.eval_model)
-        test_one_epoch(ops,pls,sess,saver,test_provider,0,feed_dict)
+        summary_writer = tf.summary.FileWriter(FLAGS.train_dir,graph=sess.graph)
+        test_one_epoch(ops,pls,sess,saver,test_provider,0,feed_dict,summary_writer)
 
     finally:
         test_provider.close()
