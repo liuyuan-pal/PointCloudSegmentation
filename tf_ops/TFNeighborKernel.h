@@ -102,5 +102,27 @@ void neighborSumFeatScatterGPU(
         FLT_TYPE *d_osfeats                 // [csum,fd]
 );
 
+template<typename FLT_TYPE,typename INT_TYPE>
+void neighborMaxFeatGatherGPU(
+        FLT_TYPE *d_ifeats,               // [pn1,fd]
+        INT_TYPE *d_vlens,                // [pn2]
+        INT_TYPE *d_vlens_bgs,            // [pn2]
+        INT_TYPE pn2,
+        INT_TYPE fd,
+        FLT_TYPE *d_ogfeats_sum,          // [pn2,fd]
+        INT_TYPE *d_ogmax_idxs            // [pn2,fd]
+);
+
+template<typename FLT_TYPE,typename INT_TYPE>
+void neighborMaxFeatScatterGPU(
+        FLT_TYPE *d_igfeats_sum,            // [pn2,fd]
+        INT_TYPE *d_igmax_idxs,             // [pn2,fd]
+        INT_TYPE *vlens_bg,                 // [pn2]
+        INT_TYPE pn1,
+        INT_TYPE pn2,
+        INT_TYPE fd,
+        FLT_TYPE *d_osfeats                 // [pn1,fd]
+);
+
 
 #endif //POINTUTIL_TFNEIGHBORKERNEL_H

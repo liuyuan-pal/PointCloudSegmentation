@@ -4,10 +4,9 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model import graph_conv_net_v4,classifier
+from model import graph_conv_pool_v1,classifier_v2
 from train_util import *
-from io_util import get_block_train_test_split,read_fn,get_class_names
-from draw_util import get_class_colors,output_points
+from io_util import get_block_train_test_split_ds,read_fn_hierarchy,get_class_names
 from provider import Provider,default_unpack_feats_labels
 
 parser = argparse.ArgumentParser()
@@ -24,7 +23,7 @@ parser.add_argument('--restore',type=bool, default=False, help='')
 parser.add_argument('--restore_epoch', type=int, default=0, help='')
 parser.add_argument('--restore_model', type=str, default='', help='')
 
-parser.add_argument('--log_step', type=int, default=50, help='')
+parser.add_argument('--log_step', type=int, default=120, help='')
 parser.add_argument('--train_dir', type=str, default='train/s3dis_graph', help='')
 parser.add_argument('--save_dir', type=str, default='model/s3dis_graph', help='')
 parser.add_argument('--log_file', type=str, default='s3dis_graph.log', help='')
@@ -32,29 +31,20 @@ parser.add_argument('--log_file', type=str, default='s3dis_graph.log', help='')
 
 parser.add_argument('--eval',type=bool, default=False, help='')
 parser.add_argument('--eval_model',type=str, default='model/label/unsupervise80.ckpt',help='')
-parser.add_argument('--eval_output',type=bool, default=True,help='')
-parser.add_argument('--num_monitor', type=bool, default=False, help='')
 
 parser.add_argument('--train_epoch_num', type=int, default=500, help='')
 
 FLAGS = parser.parse_args()
 
 
-def tower_loss(xyz,feats,labels,cidxs,nidxs,nidxs_lens,nidxs_bgs,m,
-               is_training,reuse=False,pmiu=None):
+def tower_loss(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
+               cidxs, nidxs, nidxs_lens, nidxs_bgs,
+               labels, m, is_training,reuse=False,pmiu=None):
 
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
-        global_feats,global_pfeats,local_pfeats= \
-            graph_conv_net_v4(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, reuse, 1024, num_monitor=FLAGS.num_monitor)
-
-        global_feats=tf.expand_dims(global_feats,axis=0)    # [1,1024]
-        k=tf.shape(global_pfeats)[0]
-        global_feats=tf.tile(global_feats,[k,1])            #[pn,1024]
-        all_feats=tf.concat([global_feats, global_pfeats, local_pfeats],axis=1)
-
-        all_feats=tf.expand_dims(all_feats,0)                 # [1,pn,2048+252]
-        local_pfeats=tf.expand_dims(local_pfeats,0)           # [1,pn,12]
-        logits=classifier(all_feats, local_pfeats, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
+        feats=graph_conv_pool_v1(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_lens, nidxs_bgs,m,pmiu,reuse)
+        feats=tf.expand_dims(feats,axis=0)
+        logits=classifier_v2(feats, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
 
     flatten_logits=tf.reshape(logits,[-1,FLAGS.num_classes])  # [pn,num_classes]
     labels_flatten=tf.reshape(labels,[-1,1])                  # [pn,1]
@@ -65,7 +55,8 @@ def tower_loss(xyz,feats,labels,cidxs,nidxs,nidxs_lens,nidxs_bgs,m,
     return loss,logits
 
 
-def train_ops(xyz, rgbs, covars, labels, cidxs, nidxs, nidxs_lens, nidxs_bgs, m,
+def train_ops(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
+              cidxs, nidxs, nidxs_lens, nidxs_bgs, labels, m,
               is_training, epoch_batch_num, pmiu=None):
 
     ops={}
@@ -88,11 +79,9 @@ def train_ops(xyz, rgbs, covars, labels, cidxs, nidxs, nidxs_lens, nidxs_bgs, m,
         for i in range(FLAGS.num_gpus):
             with tf.device('/gpu:{}'.format(i)):
                 with tf.name_scope('tower_{}'.format(i)):
-                    # print points[i],labels[i]
-                    feats=tf.concat([rgbs[i],covars[i]],axis=1)
-                    loss,logits=tower_loss(xyz[i], feats, labels[i], cidxs[i],
-                                           nidxs[i], nidxs_lens[i], nidxs_bgs[i],
-                                           m,is_training, reuse, pmiu)
+                    loss,logits=tower_loss(cxyzs[i], dxyzs[i], rgbs[i], covars[i], vlens[i], vlens_bgs[i], vcidxs[i],
+                                           cidxs[i], nidxs[i], nidxs_lens[i], nidxs_bgs[i], labels[i],
+                                           m, is_training, reuse, pmiu)
 
                     grad=opt.compute_gradients(loss)
                     tower_grads.append(grad)
@@ -132,29 +121,47 @@ def train_ops(xyz, rgbs, covars, labels, cidxs, nidxs, nidxs_lens, nidxs_bgs, m,
     return ops
 
 
+def fill_feed_dict(feed_in,feed_dict,pls):
+    cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens = \
+        default_unpack_feats_labels(feed_in, FLAGS.num_gpus)
+
+    batch_pt_num=0
+    batch_labels=[]
+    for k in xrange(FLAGS.num_gpus):
+        for t in xrange(3):
+            feed_dict[pls['cxyzs'][k][t]] = cxyzs[k][t]
+            feed_dict[pls['nidxs'][k][t]] = nidxs[k][t]
+            feed_dict[pls['nidxs_lens'][k][t]] = nidxs_lens[k][t]
+            feed_dict[pls['nidxs_bgs'][k][t]] = nidxs_bgs[k][t]
+            feed_dict[pls['cidxs'][k][t]] = cidxs[k][t]
+
+        feed_dict[pls['rgbs'][k]] = rgbs[k]
+        feed_dict[pls['covars'][k]] = covars[k]
+        feed_dict[pls['lbls'][k]] = lbls[k]
+
+        for t in xrange(2):
+            feed_dict[pls['dxyzs'][k][t]] = dxyzs[k][t]
+            feed_dict[pls['vlens'][k][t]] = vlens[k][t]
+            feed_dict[pls['vlens_bgs'][k][t]] = vlens_bgs[k][t]
+            feed_dict[pls['vcidxs'][k][t]] = vcidxs[k][t]
+
+        batch_pt_num += lbls[k].shape[0]
+        batch_labels.append(lbls[k])
+
+    return batch_pt_num,batch_labels
+
+
 def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
     epoch_begin=time.time()
     total_correct,total_block,total_points=0,0,0
     begin_time=time.time()
     total_losses=[]
     for i,feed_in in enumerate(trainset):
-        xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs, block_bgs, block_lens=\
-            default_unpack_feats_labels(feed_in,FLAGS.num_gpus)
-
-        for k in xrange(FLAGS.num_gpus):
-            feed_dict[pls['xyzs'][k]]=xyzs[k]
-            feed_dict[pls['rgbs'][k]]=rgbs[k]
-            feed_dict[pls['covars'][k]]=covars[k]
-            feed_dict[pls['lbls'][k]]=lbls[k]
-            feed_dict[pls['nidxs'][k]]=nidxs[k]
-            feed_dict[pls['nidxs_lens'][k]]=nidxs_lens[k]
-            feed_dict[pls['nidxs_bgs'][k]]=nidxs_bgs[k]
-            feed_dict[pls['cidxs'][k]]=cidxs[k]
-
-            total_points+=lbls[k].shape[0]
+        batch_pt_num,_=fill_feed_dict(feed_in,feed_dict,pls)
 
         feed_dict[pls['is_training']]=True
         total_block+=FLAGS.num_gpus
+        total_points+=batch_pt_num
 
         _,loss_val,correct_num=sess.run([ops['apply_grad'],ops['total_loss'],ops['correct_num']],feed_dict)
         total_losses.append(loss_val)
@@ -182,47 +189,19 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer
     begin_time=time.time()
     test_loss=[]
     all_preds,all_labels=[],[]
-    colors=get_class_colors()
     for i,feed_in in enumerate(testset):
-        xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs, block_bgs, block_lens=\
-            default_unpack_feats_labels(feed_in,FLAGS.num_gpus)
-
-        for k in xrange(FLAGS.num_gpus):
-            feed_dict[pls['xyzs'][k]]=xyzs[k]
-            feed_dict[pls['rgbs'][k]]=rgbs[k]
-            feed_dict[pls['covars'][k]]=covars[k]
-            feed_dict[pls['lbls'][k]]=lbls[k]
-            feed_dict[pls['nidxs'][k]]=nidxs[k]
-            feed_dict[pls['nidxs_lens'][k]]=nidxs_lens[k]
-            feed_dict[pls['nidxs_bgs'][k]]=nidxs_bgs[k]
-            feed_dict[pls['cidxs'][k]]=cidxs[k]
-            all_labels.append(lbls[k])
+        _,batch_labels=fill_feed_dict(feed_in,feed_dict,pls)
 
         feed_dict[pls['is_training']] = False
+        all_labels+=batch_labels
 
-        if FLAGS.num_monitor:
+        if FLAGS.eval and FLAGS.num_monitor:
             loss,preds,summary=sess.run([ops['total_loss'],ops['preds'],ops['summary']],feed_dict)
             summary_writer.add_summary(summary)
         else:
             loss,preds=sess.run([ops['total_loss'],ops['preds']],feed_dict)
         test_loss.append(loss)
         all_preds.append(preds)
-
-        # output labels and true
-        if FLAGS.eval and FLAGS.eval_output:
-            cur=0
-            for k in xrange(FLAGS.num_gpus):
-                restore_xyzs=xyzs[k]
-                restore_xyzs[:,:2]=restore_xyzs[:,:2]*1.5+1.5
-                restore_xyzs[:,2]+=1.0
-                restore_xyzs[:,2]*=block_lens[k][2]/2
-                restore_xyzs+=block_bgs[k]
-                output_points('test_result/{}_{}_true.txt'.format(i,k),restore_xyzs,colors[lbls[k],:])
-                output_points('test_result/{}_{}_pred.txt'.format(i,k),restore_xyzs,colors[preds[cur:cur+len(xyzs[k])],:])
-                cur+=len(xyzs[k])
-
-        if FLAGS.eval and FLAGS.num_monitor and i>=2:
-            break
 
     all_preds=np.concatenate(all_preds,axis=0)
     all_labels=np.concatenate(all_labels,axis=0)
@@ -273,36 +252,55 @@ def neighbor_anchors():
 
 
 def train():
-    train_list,test_list=get_block_train_test_split()
-    train_list=['data/S3DIS/room_block_10_10/'+fn for fn in train_list]
-    test_list=['data/S3DIS/room_block_10_10/'+fn for fn in test_list]
+    train_list,test_list=get_block_train_test_split_ds()
+    train_list=['data/S3DIS/room_block_10_10_ds0.03/'+fn for fn in train_list]
+    test_list=['data/S3DIS/room_block_10_10_ds0.03/'+fn for fn in test_list]
 
-    train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
-    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
-    # test_provider = Provider(train_list[:2],'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
+    train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,read_fn_hierarchy)
+    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn_hierarchy)
+    # test_provider = Provider(train_list[:2],'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn_hierarchy)
 
     try:
         pls={}
-        pls['xyzs'],pls['lbls'],pls['rgbs'],pls['covars'],pls['nidxs'],\
+        pls['cxyzs'],pls['lbls'],pls['rgbs'],pls['covars'],pls['nidxs'],\
         pls['nidxs_lens'],pls['nidxs_bgs'],pls['cidxs']=[],[],[],[],[],[],[],[]
+        pls['vlens'],pls['vlens_bgs'],pls['vcidxs'],pls['dxyzs']=[],[],[],[]
         for i in xrange(FLAGS.num_gpus):
-            pls['xyzs'].append(tf.placeholder(tf.float32,[None,3],'xyz{}'.format(i)))
+            cxyzs=[tf.placeholder(tf.float32,[None,3],'cxyz{}_{}'.format(j,i)) for j in xrange(3)]
+            pls['cxyzs'].append(cxyzs)
             pls['rgbs'].append(tf.placeholder(tf.float32,[None,3],'rgb{}'.format(i)))
             pls['covars'].append(tf.placeholder(tf.float32,[None,9],'covar{}'.format(i)))
             pls['lbls'].append(tf.placeholder(tf.int64,[None],'lbl{}'.format(i)))
-            pls['nidxs'].append(tf.placeholder(tf.int32,[None],'nidxs{}'.format(i)))
-            pls['nidxs_lens'].append(tf.placeholder(tf.int32,[None],'nidxs_lens{}'.format(i)))
-            pls['nidxs_bgs'].append(tf.placeholder(tf.int32,[None],'nidxs_bgs{}'.format(i)))
-            pls['cidxs'].append(tf.placeholder(tf.int32,[None],'cidxs{}'.format(i)))
+
+            nidxs=[tf.placeholder(tf.int32,[None],'nidxs{}_{}'.format(j,i)) for j in xrange(3)]
+            nidxs_lens=[tf.placeholder(tf.int32,[None],'nidxs_lens{}_{}'.format(j,i)) for j in xrange(3)]
+            nidxs_bgs=[tf.placeholder(tf.int32,[None],'nidxs{}_{}'.format(j,i)) for j in xrange(3)]
+            cidxs=[tf.placeholder(tf.int32,[None],'cidxs{}_{}'.format(j,i)) for j in xrange(3)]
+            pls['nidxs'].append(nidxs)
+            pls['nidxs_lens'].append(nidxs_lens)
+            pls['nidxs_bgs'].append(nidxs_bgs)
+            pls['cidxs'].append(cidxs)
+
+            vlens=[tf.placeholder(tf.int32,[None],'vlens{}_{}'.format(j,i)) for j in xrange(2)]
+            vlens_bgs=[tf.placeholder(tf.int32,[None],'vlens_bgs{}_{}'.format(j,i)) for j in xrange(2)]
+            vcidxs=[tf.placeholder(tf.int32,[None],'vcidxs{}_{}'.format(j,i)) for j in xrange(2)]
+            dxyzs=[tf.placeholder(tf.float32,[None,3],'dxyzs{}_{}'.format(j,i)) for j in xrange(2)]
+
+            pls['vlens'].append(vlens)
+            pls['vlens_bgs'].append(vlens_bgs)
+            pls['vcidxs'].append(vcidxs)
+            pls['dxyzs'].append(dxyzs)
 
         pmiu=neighbor_anchors_v2()
         pls['is_training']=tf.placeholder(tf.bool,name='is_training')
         pls['pmiu']=tf.placeholder(tf.float32,name='pmiu')
 
-        batch_num_per_epoch=2500/FLAGS.num_gpus
-        ops=train_ops(pls['xyzs'],pls['rgbs'],pls['covars'],pls['lbls'],
+        batch_num_per_epoch=2000/FLAGS.num_gpus
+        ops=train_ops(pls['cxyzs'],pls['dxyzs'],pls['rgbs'],pls['covars'],
+                      pls['vlens'],pls['vlens_bgs'],pls['vcidxs'],
                       pls['cidxs'],pls['nidxs'],pls['nidxs_lens'],pls['nidxs_bgs'],
-                      pmiu.shape[1],pls['is_training'],batch_num_per_epoch,pls['pmiu'])
+                      pls['lbls'],pmiu.shape[1],pls['is_training'],
+                      batch_num_per_epoch,pls['pmiu'])
 
         feed_dict={}
         feed_dict[pls['pmiu']]=pmiu
@@ -329,10 +327,10 @@ def train():
 
 
 def eval():
-    train_list,test_list=get_block_train_test_split()
-    test_list=['data/S3DIS/room_block_10_10/'+fn for fn in test_list]
+    train_list,test_list=get_block_train_test_split_ds()
+    test_list=['data/S3DIS/room_block_10_10_ds0.03/'+fn for fn in test_list]
 
-    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
+    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn_hierarchy)
 
     try:
         pls={}

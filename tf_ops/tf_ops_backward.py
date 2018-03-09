@@ -5,6 +5,7 @@ import os
 # get the file path
 neighbor_ops=tf.load_op_library(os.path.split(os.path.realpath(__file__))[0]+"/build/libTFNeighborBackwardOps.so")
 
+
 @ops.RegisterGradient("NeighborScatter")
 def _neighbor_scatter_gradient(op,dsfeats):
     use_diff=op.get_attr('use_diff')
@@ -19,8 +20,14 @@ def _location_weight_feat_sum_gradient(op,dtfeats_sum):
 
 
 @ops.RegisterGradient("NeighborSumFeatGather")
-def _neighbor_sum_feat_gather_gradient(op,d_gfeat_sum):
-    difeats=neighbor_ops.neighbor_sum_feat_scatter(d_gfeat_sum, op.inputs[1])
+def _neighbor_sum_feat_gather_gradient(op, dgfeats):
+    difeats=neighbor_ops.neighbor_sum_feat_scatter(dgfeats, op.inputs[1], op.inputs[2], op.inputs[3])
+    return [difeats,None,None,None]
+
+
+@ops.RegisterGradient("NeighborSumFeatScatter")
+def _neighbor_sum_feat_scatter_gradient(op,dsfeats):
+    difeats=neighbor_ops.neighbor_sum_feat_gather(dsfeats, op.inputs[1], op.inputs[2], op.inputs[3])
     return [difeats,None,None,None]
 
 
@@ -28,4 +35,10 @@ def _neighbor_sum_feat_gather_gradient(op,d_gfeat_sum):
 def _location_weight_feat_sum_gradient(op,dlw_sum):
     dlw=neighbor_ops.location_weight_sum_backward(op.inputs[0], dlw_sum, op.inputs[1], op.inputs[2])
     return [dlw,None,None]
+
+
+@ops.RegisterGradient("NeighborMaxFeatGather")
+def _neighbor_max_feat_gather_gradient(op,dgfeats,dmax_idxs):
+    difeats=neighbor_ops.neighbor_max_feat_scatter(dgfeats,op.inputs[0],op.outputs[1],op.inputs[2])
+    return [difeats,None,None]
 

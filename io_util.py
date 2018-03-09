@@ -2,7 +2,7 @@ import numpy as np
 import libPointUtil
 import cPickle
 import random
-from aug_util import sample_block,normalize_block
+from aug_util import sample_block,normalize_block,normalize_block_hierarchy,sample_block_v2
 import os
 import time
 
@@ -11,6 +11,11 @@ def read_room_pkl(filename):
     with open(filename,'rb') as f:
         points,labels=cPickle.load(f)
     return points,labels
+
+
+def save_room_pkl(filename,points,labels):
+    with open(filename,'wb') as f:
+        cPickle.dump([points,labels],f,protocol=2)
 
 
 BLOCK_SIZE=3.0
@@ -41,6 +46,25 @@ def get_block_train_test_split(test_area=5):
 
     return train, test
 
+def get_block_train_test_split_ds(test_area=5):
+    '''
+    :param test_area: default use area 5 as testset
+    :return:
+    '''
+    path = os.path.split(os.path.realpath(__file__))[0]
+    f = open(path + '/cached/room_block_ds0.03_stems.txt', 'r')
+    file_stems = [line.strip('\n') for line in f.readlines()]
+    f.close()
+
+    train, test = [], []
+    for fs in file_stems:
+        if fs.split('_')[2] == str(test_area):
+            test.append(fs)
+        else:
+            train.append(fs)
+
+    return train, test
+
 
 def get_class_names():
     names=[]
@@ -50,6 +74,10 @@ def get_class_names():
             names.append(line.strip('\n'))
 
     return names
+
+
+def get_class_loss_weights():
+    return np.asarray([1.0,1.0,1.0,100.0,1.5,1.0,1.0,1.0,1.0,10.0,1.0,2.0,1.0],np.float32)
 
 
 def read_fn(model,filename):
@@ -67,6 +95,28 @@ def read_fn(model,filename):
             normalize_block(xyzs,rgbs,covars,lbls,neighbor_radius=NEIGHBOR_RADIUS)
 
     return xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs, block_bgs, block_lens
+
+
+def read_fn_hierarchy(model,filename):
+    nr1,nr2,nr3=0.1,0.4,1.0
+    vc1,vc2=0.2,0.5
+    sstride=0.075
+    bsize=3.0
+    bstride=1.5
+    min_pn=1024
+    points,labels=read_room_pkl(filename) # [n,6],[n,1]
+    if model=='train':
+        xyzs, rgbs, covars, lbls=sample_block_v2(points,labels,sstride,bsize,bstride,min_pn=min_pn,
+                                              use_rescale=True,use_flip=True,use_rotate=False)
+        cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens = \
+            normalize_block_hierarchy(xyzs,rgbs,covars,lbls,nr1=nr1,nr2=nr2,nr3=nr3,vc1=vc1,vc2=vc2,
+                resample=True,jitter_color=True,resample_low=RESAMPLE_RATIO_LOW,resample_high=RESAMPLE_RATIO_HIGH)
+    else:
+        xyzs, rgbs, covars, lbls=sample_block_v2(points,labels,sstride,bsize,bsize,min_pn=min_pn/2)
+        cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens = \
+            normalize_block_hierarchy(xyzs,rgbs,covars,lbls,nr1=nr1,nr2=nr2,nr3=nr3,vc1=vc1,vc2=vc2)
+
+    return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens
 
 
 def test_data_iter():
@@ -198,6 +248,133 @@ def test_time():
     print 'normalize cost {} s '.format(time.time()-t)
 
 
+def output_hierarchy(cxyz1,cxyz2,cxyz3,rgbs,lbls,vlens1,vlens2,dxyz1,dxyz2,vc1,vc2):
+    from draw_util import get_class_colors,output_points
+    output_points('test_result/cxyz1_rgb.txt',cxyz1,rgbs)
+    colors=get_class_colors()
+    output_points('test_result/cxyz1_lbl.txt',cxyz1,colors[lbls.flatten(),:])
+
+    # test cxyz
+    vidxs=[]
+    for i,l in enumerate(vlens1):
+        vidxs+=[i for _ in xrange(l)]
+    colors=np.random.randint(0,256,[vlens1.shape[0],3])
+    vidxs=np.asarray(vidxs,np.int32)
+
+    output_points('test_result/cxyz1.txt',cxyz1,colors[vidxs,:])
+    output_points('test_result/cxyz2.txt',cxyz2,colors)
+
+    vidxs=[]
+    for i,l in enumerate(vlens2):
+        vidxs+=[i for _ in xrange(l)]
+    colors=np.random.randint(0,256,[vlens2.shape[0],3])
+    vidxs=np.asarray(vidxs,np.int32)
+
+    output_points('test_result/cxyz2a.txt',cxyz2,colors[vidxs,:])
+    output_points('test_result/cxyz3a.txt',cxyz3,colors)
+
+    # test dxyz
+    c=0
+    for k,l in enumerate(vlens1):
+        for t in xrange(l):
+            dxyz1[c+t]*=vc1
+            dxyz1[c+t]+=cxyz2[k]
+        c+=l
+    output_points('test_result/dxyz1.txt',dxyz1)
+
+    c=0
+    for k,l in enumerate(vlens2):
+        for t in xrange(l):
+            dxyz2[c+t]*=vc2
+            dxyz2[c+t]+=cxyz3[k]
+        c+=l
+    output_points('test_result/dxyz2.txt',dxyz2)
+
+
+def test_data_iter_hierarchy():
+    from provider import Provider,default_unpack_feats_labels
+    from draw_util import output_points,get_class_colors
+    import time
+    import random
+
+    train_list,test_list=get_block_train_test_split_ds()
+    # random.shuffle(train_list)
+    train_list=['data/S3DIS/room_block_10_10_ds0.03/'+fn for fn in train_list]
+    test_list=['data/S3DIS/room_block_10_10_ds0.03/'+fn for fn in test_list]
+    train_list=train_list[:251]
+    test_list=test_list[:len(test_list)/5]
+
+    train_provider = Provider(train_list,'train',4,read_fn_hierarchy)
+    test_provider = Provider(test_list,'test',4,read_fn_hierarchy)
+    print len(train_list)
+    try:
+        # begin=time.time()
+        # i=0
+        # for data in test_provider:
+        #     i+=1
+        #     pass
+        # print 'batch_num {}'.format(i*4)
+        # print 'test set cost {} s'.format(time.time()-begin)
+        begin=time.time()
+        i=0
+        for data in train_provider:
+            i+=1
+            cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens = \
+                default_unpack_feats_labels(data, 4)
+            for k in xrange(4):
+                for t in xrange(3):
+                    print 'batch {} data {} lvl {} cxyz min {} max {} ptnum {}'.format(i,k,t,np.min(cxyzs[k][t],axis=0),
+                                                                                       np.max(cxyzs[k][t],axis=0),
+                                                                                       cxyzs[k][t].shape[0])
+                    assert cidxs[k][t].shape[0]==nidxs[k][t].shape[0]
+                    assert nidxs_bgs[k][t].shape[0]==cxyzs[k][t].shape[0]
+                    assert nidxs_lens[k][t].shape[0]==cxyzs[k][t].shape[0]
+                    assert np.sum(nidxs_lens[k][t])==nidxs[k][t].shape[0]
+                    assert nidxs_bgs[k][t][-1]+nidxs_lens[k][t][-1]==nidxs[k][t].shape[0]
+                    assert np.max(cidxs[k][t])==cxyzs[k][t].shape[0]-1
+                    print 'lvl {} avg nsize {}'.format(t,cidxs[k][t].shape[0]/float(cxyzs[k][t].shape[0]))
+
+                print 'rgb min {} max {}'.format(np.min(rgbs[k],axis=0),np.max(rgbs[k],axis=0))
+                # print 'covars min {} max {}'.format(np.min(covars[k],axis=0),np.max(covars[k],axis=0))
+                # print np.min(covars[k],axis=0)
+                # print np.max(covars[k],axis=0)
+
+                for t in xrange(2):
+                    print 'batch {} data {} lvl {} dxyz min {} max {} ptnum {}'.format(i,k,t,np.min(dxyzs[k][t],axis=0),
+                                                                                       np.max(dxyzs[k][t],axis=0),
+                                                                                       dxyzs[k][t].shape[0])
+                    assert vlens[k][t].shape[0]==cxyzs[k][t+1].shape[0]
+                    assert vlens_bgs[k][t].shape[0]==cxyzs[k][t+1].shape[0]
+                    assert np.sum(vlens[k][t])==cxyzs[k][t].shape[0]
+                    assert vlens_bgs[k][t][-1]+vlens[k][t][-1]==cxyzs[k][t].shape[0]
+                    assert np.max(vcidxs[k][t])==cxyzs[k][t+1].shape[0]-1
+                print '////////////////////'
+
+            output_hierarchy(cxyzs[0][0],cxyzs[0][1],cxyzs[0][2],rgbs[0]*127+128,lbls[0],vlens[0][0],vlens[0][1],dxyzs[0][0],dxyzs[0][1],0.2,0.5)
+
+            if i>1:
+                break
+
+        print 'batch_num {}'.format(i*4)
+        print 'train set cost {} s'.format(time.time()-begin)
+
+
+    finally:
+        print 'done'
+        train_provider.close()
+        test_provider.close()
+
+def test_hierarchy_speed():
+    from draw_util import output_points,get_class_colors
+
+    train_list,test_list=get_block_train_test_split_ds()
+    random.shuffle(train_list)
+    train_list=['data/S3DIS/room_block_10_10_ds0.03/'+fn for fn in train_list]
+    filename='data/S3DIS/room_block_10_10_ds0.03/53_Area_2_auditorium_1.pkl'
+
+    for i in xrange(10):
+        read_fn_hierarchy('test',filename)
+
 
 if __name__ =="__main__":
-    test_data_iter()
+    test_data_iter_hierarchy()

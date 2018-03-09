@@ -1,10 +1,47 @@
 import tensorflow as tf
 import os
 path = os.path.split(os.path.realpath(__file__))[0]
-neighbor_ops=tf.load_op_library(path+'/build/libTFNeighborForwardOps.so')
+neighbor_ops=tf.load_op_library(path+'/build/libTFNeighborOps.so')
 import sys
 sys.path.append(path)
-import tf_ops_backward
+
+from tensorflow.python.framework import ops
+
+@ops.RegisterGradient("NeighborScatter")
+def _neighbor_scatter_gradient(op,dsfeats):
+    use_diff=op.get_attr('use_diff')
+    difeats=neighbor_ops.neighbor_gather(dsfeats, op.inputs[1], op.inputs[2], op.inputs[3], use_diff=use_diff)
+    return [difeats,None,None,None]
+
+
+@ops.RegisterGradient("LocationWeightFeatSum")
+def _location_weight_feat_sum_gradient(op,dtfeats_sum):
+    dlw,dfeats=neighbor_ops.location_weight_feat_sum_backward(op.inputs[0], op.inputs[1], dtfeats_sum, op.inputs[2], op.inputs[3])
+    return [dlw,dfeats,None,None]
+
+
+@ops.RegisterGradient("NeighborSumFeatGather")
+def _neighbor_sum_feat_gather_gradient(op, dgfeats):
+    difeats=neighbor_ops.neighbor_sum_feat_scatter(dgfeats, op.inputs[1], op.inputs[2], op.inputs[3])
+    return [difeats,None,None,None]
+
+
+@ops.RegisterGradient("NeighborSumFeatScatter")
+def _neighbor_sum_feat_scatter_gradient(op,dsfeats):
+    difeats=neighbor_ops.neighbor_sum_feat_gather(dsfeats, op.inputs[1], op.inputs[2], op.inputs[3])
+    return [difeats,None,None,None]
+
+
+@ops.RegisterGradient("LocationWeightSum")
+def _location_weight_feat_sum_gradient(op,dlw_sum):
+    dlw=neighbor_ops.location_weight_sum_backward(op.inputs[0], dlw_sum, op.inputs[1], op.inputs[2])
+    return [dlw,None,None]
+
+
+@ops.RegisterGradient("NeighborMaxFeatGather")
+def _neighbor_max_feat_gather_gradient(op,dgfeats,dmax_idxs):
+    difeats=neighbor_ops.neighbor_max_feat_scatter(dgfeats,op.inputs[0],op.outputs[1],op.inputs[2])
+    return [difeats,None,None]
 
 
 def _variable_on_cpu(name, shape, initializer, use_fp16=False):
@@ -153,6 +190,7 @@ def graph_conv_xyz(xyz, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, ofn,
 
         if activation_fn is not None:
             pfeats=activation_fn(pfeats)
+            pfeats=tf.reshape(pfeats,[-1,ofn])
 
         if compute_lw:
             lw=lw_
@@ -182,3 +220,13 @@ def graph_conv_feats(feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, o
             pfeats=activation_fn(pfeats)
 
     return pfeats
+
+
+def graph_pool(feats,vlens,vlens_bgs):
+    pool_feats,max_idxs=neighbor_ops.neighbor_max_feat_gather(feats,vlens,vlens_bgs)
+    return pool_feats
+
+
+def graph_unpool(feats,vlens,vlens_bgs,cidxs):
+    unpool_feats=neighbor_ops.neighbor_sum_feat_scatter(feats,cidxs,vlens,vlens_bgs)
+    return unpool_feats

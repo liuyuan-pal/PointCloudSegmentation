@@ -12,6 +12,8 @@ using namespace tensorflow;
 REGISTER_OP("NeighborSumFeatScatter")
         .Input("gfeats_sum: float32")    // [pn,fd]
         .Input("cidxs: int32")           // [csum]
+        .Input("nidxs_lens: int32")      // [pn]
+        .Input("nidxs_bgs: int32")       // [pn]
         .Output("sfeats: float32")       // [csum,fd]
         .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
             ::tensorflow::shape_inference::ShapeHandle gfeats_sum_shape;
