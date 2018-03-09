@@ -5,6 +5,14 @@ import random
 from aug_util import sample_block,normalize_block,normalize_block_hierarchy,sample_block_v2
 import os
 import time
+import h5py
+
+def read_room_h5(room_h5_file):
+    f=h5py.File(room_h5_file,'r')
+    data,label = f['data'][:],f['label'][:]
+    f.close()
+
+    return data, label
 
 
 def read_room_pkl(filename):
@@ -18,13 +26,24 @@ def save_room_pkl(filename,points,labels):
         cPickle.dump([points,labels],f,protocol=2)
 
 
-BLOCK_SIZE=3.0
-BLOCK_STRIDE=1.5
-SAMPLE_STRIDE=0.1
-RESAMPLE_RATIO_LOW=0.8
-RESAMPLE_RATIO_HIGH=1.0
-NEIGHBOR_RADIUS=0.2
-MIN_POINT_NUM=2048
+def get_train_test_split(test_area=5):
+    '''
+    :param test_area: default use area 5 as testset
+    :return:
+    '''
+    path = os.path.split(os.path.realpath(__file__))[0]
+    f = open(path + '/cached/room_stems.txt', 'r')
+    file_stems = [line.strip('\n') for line in f.readlines()]
+    f.close()
+
+    train, test = [], []
+    for fs in file_stems:
+        if fs.split('_')[2] == str(test_area):
+            test.append(fs)
+        else:
+            train.append(fs)
+
+    return train, test
 
 
 def get_block_train_test_split(test_area=5):
@@ -45,6 +64,7 @@ def get_block_train_test_split(test_area=5):
             train.append(fs)
 
     return train, test
+
 
 def get_block_train_test_split_ds(test_area=5):
     '''
@@ -81,6 +101,13 @@ def get_class_loss_weights():
 
 
 def read_fn(model,filename):
+    BLOCK_SIZE=3.0
+    BLOCK_STRIDE=1.5
+    SAMPLE_STRIDE=0.1
+    RESAMPLE_RATIO_LOW=0.8
+    RESAMPLE_RATIO_HIGH=1.0
+    NEIGHBOR_RADIUS=0.2
+    MIN_POINT_NUM=2048
     points,labels=read_room_pkl(filename) # [n,6],[n,1]
     if model=='train':
         xyzs, rgbs, covars, lbls=sample_block(points,labels,SAMPLE_STRIDE,BLOCK_SIZE,BLOCK_STRIDE,min_pn=MIN_POINT_NUM,
@@ -97,26 +124,40 @@ def read_fn(model,filename):
     return xyzs, rgbs, covars, lbls, nidxs, nidxs_lens, nidxs_bgs, cidxs, block_bgs, block_lens
 
 
-def read_fn_hierarchy(model,filename):
+def read_fn_hierarchy(model, filename, presample=True):
     nr1,nr2,nr3=0.1,0.4,1.0
     vc1,vc2=0.2,0.5
     sstride=0.075
     bsize=3.0
     bstride=1.5
     min_pn=1024
-    points,labels=read_room_pkl(filename) # [n,6],[n,1]
-    if model=='train':
-        xyzs, rgbs, covars, lbls=sample_block_v2(points,labels,sstride,bsize,bstride,min_pn=min_pn,
-                                              use_rescale=True,use_flip=True,use_rotate=False)
-        cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens = \
-            normalize_block_hierarchy(xyzs,rgbs,covars,lbls,nr1=nr1,nr2=nr2,nr3=nr3,vc1=vc1,vc2=vc2,
-                resample=True,jitter_color=True,resample_low=RESAMPLE_RATIO_LOW,resample_high=RESAMPLE_RATIO_HIGH)
+    resample_ratio_low=0.8
+    resample_ratio_high=1.0
+    if filename.endswith('.pkl'):
+        points,labels=read_room_pkl(filename) # [n,6],[n,1]
     else:
-        xyzs, rgbs, covars, lbls=sample_block_v2(points,labels,sstride,bsize,bsize,min_pn=min_pn/2)
-        cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens = \
+        points,labels=read_room_h5(filename) # [n,6],[n,1]
+    if model=='train':
+        if presample:
+            xyzs, rgbs, covars, lbls=sample_block_v2(points,labels,sstride,bsize,bstride,min_pn=min_pn,
+                                                  use_rescale=True,use_flip=True,use_rotate=False)
+        else:
+            xyzs, rgbs, covars, lbls=sample_block(points,labels,sstride,bsize,bstride,min_pn=min_pn,
+                                                  use_rescale=True,use_flip=True,use_rotate=False)
+
+        cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = \
+            normalize_block_hierarchy(xyzs,rgbs,covars,lbls,nr1=nr1,nr2=nr2,nr3=nr3,vc1=vc1,vc2=vc2,
+                resample=True,jitter_color=True,resample_low=resample_ratio_low,resample_high=resample_ratio_high)
+    else:
+        if presample:
+            xyzs, rgbs, covars, lbls=sample_block_v2(points,labels,sstride,bsize,bsize,min_pn=min_pn/2)
+        else:
+            xyzs, rgbs, covars, lbls=sample_block(points,labels,sstride,bsize,bsize,min_pn=min_pn/2)
+
+        cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = \
             normalize_block_hierarchy(xyzs,rgbs,covars,lbls,nr1=nr1,nr2=nr2,nr3=nr3,vc1=vc1,vc2=vc2)
 
-    return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens
+    return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens,block_mins
 
 
 def test_data_iter():
@@ -319,7 +360,7 @@ def test_data_iter_hierarchy():
         i=0
         for data in train_provider:
             i+=1
-            cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens = \
+            cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = \
                 default_unpack_feats_labels(data, 4)
             for k in xrange(4):
                 for t in xrange(3):

@@ -465,6 +465,51 @@ def graph_conv_pool_v1(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs, cid
         return upf0
 
 
+def graph_conv_pool_v2(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, reuse=False):
+    with tf.name_scope('graph_conv_pool_net'):
+        with tf.name_scope('conv_stage0'):
+            feats0=tf.concat([rgbs,covars],axis=1)
+            # fc0 [pn0,32] lf0 [pn0,76]
+            fc0,lf0=graph_conv_pool_stage(0,cxyzs[0],dxyzs[0],feats0,cidxs[0],nidxs[0],nidxs_lens[0],nidxs_bgs[0],
+                                          m, 12, 8, [8, 8, 16, 32], [8, 8, 16, 32], [32, 32, 32], 32, pmiu, reuse)
+            # fc0_pool [pn1,]
+            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+
+        with tf.name_scope('conv_stage1'):
+            # fc1 [pn1,128] lf1 [pn1,480]
+            fc1,lf1=graph_conv_pool_stage(1,cxyzs[1],dxyzs[1],fc0_pool,cidxs[1],nidxs[1],nidxs_lens[1],nidxs_bgs[1],
+                                          m, 32, 8, [32, 32, 32, 32, 64, 64, 64, 64], [32, 32, 32, 32, 64, 64, 64, 64],
+                                          [128, 128, 128], 128, pmiu, reuse)
+            # fc1_pool [pn2,]
+            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+
+        with tf.name_scope('conv_stage2'):
+            # fc2 [pn2,256] lf2 [pn2,648]
+            fc2,lf2=graph_conv_pool_stage(2,cxyzs[2],cxyzs[2],fc1_pool,cidxs[2],nidxs[2],nidxs_lens[2],nidxs_bgs[2],
+                                          m, 128, 8, [128, 128, 256, 256], [128, 128, 256, 256], [256, 256], 256, pmiu, reuse)
+            # [1,256]
+            fc2_pool=tf.reduce_max(fc2,axis=0)
+
+
+        with tf.name_scope('unpool_stage2'):
+            # [pn3,256]
+            upfeats2=tf.tile(tf.expand_dims(fc2_pool,axis=0),[tf.shape(fc2)[0],1])
+            # [pn3,256+256+648=1260] [fc2_pool,fc2,lf2]
+            upf2=tf.concat([upfeats2,fc2,lf2],axis=1)
+
+        with tf.name_scope('unpool_stage1'):
+            # [pn2,1260]
+            upfeats1=graph_unpool_stage(1,upf2,vlens[1],vlens_bgs[1],vcidxs[1])
+            # [pn2,1260+128+480=1868] [fc2_pool,fc2,lf2,fc1,lf1]
+            upf1=tf.concat([upfeats1,fc1,lf1],axis=1)
+
+        with tf.name_scope('unpool_stage0'):
+            # [pn1,1868+32+76=1976] [fc2_pool,fc2,lf2,fc1,lf1,fc0,lf0]
+            upfeats0=graph_unpool_stage(0,upf1,vlens[0],vlens_bgs[0],vcidxs[0])
+            upf0=tf.concat([upfeats0,fc0,lf0],axis=1)
+
+        return upf0
+
 def classifier(feats, pfeats, is_training, num_classes, reuse=False, use_bn=False):
     '''
 

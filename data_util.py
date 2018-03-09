@@ -108,7 +108,7 @@ def prepare_semantic3d_partition():
         fns=f.readlines()
         fns=[fn.strip('\n') for fn in fns]
 
-    for fn in fns:
+    for fn in fns[6:]:
         lf=open('data/Semantic3D.Net/raw/train/' + fn + '.labels')
         pf=open('data/Semantic3D.Net/raw/train/' + fn + '.txt')
 
@@ -139,6 +139,7 @@ def prepare_semantic3d_partition():
             labels.append(int(lf.readline()))
             pi+=1
             if pi>=3000000:
+                print 'output {} part {}'.format(fn,part_id)
                 pi=0
                 save_room_pkl('data/Semantic3D.Net/pkl/train/'+fn+'_{}.pkl'.format(part_id),
                               np.asarray(points,np.float32),np.asarray(labels,np.int32))
@@ -149,8 +150,7 @@ def prepare_semantic3d_partition():
             save_room_pkl('data/Semantic3D.Net/pkl/train/'+fn+'_{}.pkl'.format(part_id),
                           np.asarray(points,np.float32),np.asarray(labels,np.int32))
 
-
-
+        print '{} done'.format(fn)
 
 if __name__=="__main__":
     prepare_semantic3d_partition()

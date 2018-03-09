@@ -125,6 +125,7 @@ def sample_block(points, labels, ds_stride, block_size, block_stride, min_pn,
     # t=time.time()
     xyzs=np.ascontiguousarray(points[:,:3])
     rgbs=np.ascontiguousarray(points[:,3:])
+    min_xyzs=np.min(xyzs,axis=0,keepdims=True)
 
     covar_ds_idxs=libPointUtil.gridDownsampleGPU(xyzs, covar_ds_stride, False)
     covar_ds_xyzs=np.ascontiguousarray(xyzs[covar_ds_idxs,:])
@@ -181,8 +182,10 @@ def sample_block(points, labels, ds_stride, block_size, block_stride, min_pn,
     # print 'index cost {} s'.format(time.time()-t)
 
     # t=time.time()
-    points-=np.min(points,axis=0,keepdims=True)
-    idxs = uniform_sample_block(xyzs,block_size,block_stride,normalized=False,min_pn=min_pn)
+    xyzs-=min_xyzs
+    # points-=np.min(points, axis=0, keepdims=True)
+    idxs = uniform_sample_block(xyzs,block_size,block_stride,normalized=True,min_pn=min_pn)
+    xyzs+=min_xyzs
     # print 'sample cost {} s'.format(time.time()-t)
     # t=time.time()
     xyzs, rgbs, covars, lbls=fetch_subset([xyzs,rgbs,covars,lbls],idxs)
@@ -196,6 +199,7 @@ def sample_block_v2(points, labels, ds_stride, block_size, block_stride, min_pn,
                  covar_nn_size=0.1):
     xyzs=np.ascontiguousarray(points[:,:3])
     rgbs=np.ascontiguousarray(points[:,3:])
+    min_xyzs=np.min(xyzs,axis=0,keepdims=True)
 
     # flip
     if use_flip:
@@ -235,8 +239,10 @@ def sample_block_v2(points, labels, ds_stride, block_size, block_stride, min_pn,
     rgbs=rgbs[ds_idxs,:]
     lbls=labels[ds_idxs,:]
 
-    points-=np.min(points,axis=0,keepdims=True)
-    idxs = uniform_sample_block(xyzs,block_size,block_stride,normalized=False,min_pn=min_pn)
+    xyzs-=min_xyzs
+    # points-=np.min(points, axis=0, keepdims=True)
+    idxs = uniform_sample_block(xyzs,block_size,block_stride,normalized=True,min_pn=min_pn)
+    xyzs+=min_xyzs
     xyzs, rgbs, covars, lbls=fetch_subset([xyzs,rgbs,covars,lbls],idxs)
 
     return xyzs, rgbs, covars, lbls
@@ -364,6 +370,7 @@ def normalize_block_hierarchy(xyzs,rgbs,covars,lbls,nr1=0.1,nr2=0.3,nr3=1.0,vc1=
     bn=len(xyzs)
     cxyzs,dxyzs,vlens,vlens_bgs,vcidxs,\
     cidxs,nidxs,nidxs_bgs,nidxs_lens=[],[],[],[],[],[],[],[],[]
+    block_mins=[]
 
     for bid in xrange(bn):
         if resample:
@@ -377,7 +384,9 @@ def normalize_block_hierarchy(xyzs,rgbs,covars,lbls,nr1=0.1,nr2=0.3,nr3=1.0,vc1=
 
         # offset center to zero
         # !!! dont rescale here since it will affect the neighborhood size !!!
-        xyzs[bid]-=np.min(xyzs[bid],axis=0,keepdims=True)
+        min_xyz=np.min(xyzs[bid],axis=0,keepdims=True)
+        block_mins.append(min_xyz[0])
+        xyzs[bid]-=min_xyz
         xyzs[bid][:,:2]-=1.5    # [-1.5,1.5]
 
         cxyz1, dxyz1, vlens1, cxyz2, dxyz2, vlens2, cxyz3, feats_list=\
@@ -415,7 +424,7 @@ def normalize_block_hierarchy(xyzs,rgbs,covars,lbls,nr1=0.1,nr2=0.3,nr3=1.0,vc1=
                 [cidxs1,cidxs2,cidxs3],[nidxs1,nidxs2,nidxs3],[nidxs_bgs1,nidxs_bgs2,nidxs_bgs3],
                 [nidxs_lens1,nidxs_lens2,nidxs_lens3]])
 
-    return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens
+    return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens,block_mins
 
 #
 # class IterWrapper():
