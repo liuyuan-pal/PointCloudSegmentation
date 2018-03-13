@@ -76,6 +76,43 @@ def np_unpool_backward(dupfeats,upfeats,ifeats,vlens,vlens_bgs,cidxs):
     return difeats
 
 
+def np_concat_non_center_forward(ifeats,nidxs,nidxs_lens,nidxs_bgs):
+    pn,ifn=ifeats.shape
+    csum=nidxs.shape[0]
+
+    ofeats=np.empty([csum-pn,ifn*2],np.float64)
+    for i in xrange(pn):
+        nn_bg=nidxs_bgs[i]
+        nn_size=nidxs_lens[i]
+        t=nn_bg-i
+        for j in xrange(nn_size):
+            idx=nidxs[nn_bg+j]
+            if idx==i: continue
+            ofeats[t,:ifn]=ifeats[i,:]
+            ofeats[t,ifn:]=ifeats[idx,:]
+            t+=1
+
+    return ofeats
+
+
+def np_concat_non_center_backward(sfeats,nidxs,nidxs_lens,nidxs_bgs):
+    ifn=sfeats.shape[1]/2
+    pn=nidxs_bgs.shape[0]
+
+    ifeats=np.zeros([pn,ifn],np.float64)
+    for i in xrange(pn):
+        nn_bg=nidxs_bgs[i]
+        nn_size=nidxs_lens[i]
+        t=nn_bg-i
+        for j in xrange(nn_size):
+            idx=nidxs[nn_bg+j]
+            if idx==i: continue
+            ifeats[i,:]+=sfeats[t,:ifn]
+            ifeats[idx,:]+=sfeats[t,ifn:]
+            t+=1
+
+    return ifeats
+
 
 
 def test_np_pool():
@@ -121,5 +158,30 @@ def test_np_unpool():
 
     print 'diff {} '.format(np.max(difeats-difeats_num))
 
+
+def test_concat_non_center():
+    import libPointUtil
+    pts=np.random.uniform(-1.0,1.0,[20,3])
+    pts=np.asarray(pts,dtype=np.float32)
+    nidxs=libPointUtil.findNeighborRadiusGPU(pts,1.0)
+    nidxs_lens=np.asarray([len(idxs) for idxs in nidxs],dtype=np.int32)
+    nidxs_bgs=compute_nidxs_bgs(nidxs_lens)
+    nidxs=np.concatenate(nidxs,axis=0)
+    nidxs=np.asarray(nidxs,dtype=np.int32)
+
+    pts=np.asarray(pts,np.float64)
+    ofeats=np_concat_non_center_forward(pts,nidxs,nidxs_lens,nidxs_bgs)
+    dofeats=np.random.uniform(-1,1,ofeats.shape)
+    difeats=np_concat_non_center_backward(dofeats,nidxs,nidxs_lens,nidxs_bgs)
+
+    f=lambda ifeats: np_concat_non_center_forward(ifeats,nidxs,nidxs_lens,nidxs_bgs)
+    difeats_num=eval_numerical_gradient_array(f,pts,dofeats)
+
+    print pts
+    print ofeats
+
+    print 'diff {} '.format(np.max(difeats-difeats_num))
+
+
 if __name__=="__main__":
-    test_np_unpool()
+    test_concat_non_center()

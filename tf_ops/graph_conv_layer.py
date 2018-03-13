@@ -44,6 +44,12 @@ def _neighbor_max_feat_gather_gradient(op,dgfeats,dmax_idxs):
     return [difeats,None,None]
 
 
+@ops.RegisterGradient("NeighborConcatNonCenterScatter")
+def _neighbor_concat_non_center_scatter_gradient(op,dsfeats):
+    difeats=neighbor_ops.neighbor_concat_non_center_gather(dsfeats, op.inputs[1], op.inputs[2], op.inputs[3])
+    return [difeats,None,None,None]
+
+
 def _variable_on_cpu(name, shape, initializer, use_fp16=False):
     """Helper to create a Variable stored on CPU memory.
     Args:
@@ -230,3 +236,7 @@ def graph_pool(feats,vlens,vlens_bgs):
 def graph_unpool(feats,vlens,vlens_bgs,cidxs):
     unpool_feats=neighbor_ops.neighbor_sum_feat_scatter(feats,cidxs,vlens,vlens_bgs)
     return unpool_feats
+
+
+def graph_concat_non_center_scatter(ifeats,nidxs,nidxs_lens,nidxs_bgs):
+    return neighbor_ops.neighbor_concat_non_center_scatter(ifeats,nidxs,nidxs_lens,nidxs_bgs)

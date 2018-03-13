@@ -1,9 +1,10 @@
 import tensorflow as tf
-from model import graph_conv_pool_v1,classifier_v2
+from model import graph_conv_pool_v3,classifier_v3
 from train_graph_pool import neighbor_anchors_v2
-from io_util import read_fn_hierarchy,get_train_test_split,read_room_h5,get_block_train_test_split,read_room_pkl
+from io_util import read_fn_hierarchy,get_train_test_split,read_room_h5,get_block_train_test_split,read_room_pkl,get_class_names
 from aug_util import compute_nidxs_bgs
 from draw_util import output_points,get_class_colors
+from train_util import val2iou,acc_val
 import numpy as np
 import argparse
 import libPointUtil
@@ -49,14 +50,12 @@ def build_placeholder():
 
 def fill_feed_dict(feed_in,feed_dict,pls,idx):
     cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = feed_in
-
     for t in xrange(3):
         feed_dict[pls['cxyzs'][t]] = cxyzs[idx][t]
         feed_dict[pls['nidxs'][t]] = nidxs[idx][t]
         feed_dict[pls['nidxs_lens'][t]] = nidxs_lens[idx][t]
         feed_dict[pls['nidxs_bgs'][t]] = nidxs_bgs[idx][t]
         feed_dict[pls['cidxs'][t]] = cidxs[idx][t]
-        print np.min(cxyzs[idx][t])
 
     feed_dict[pls['rgbs']] = rgbs[idx]
     feed_dict[pls['covars']] = covars[idx]
@@ -70,33 +69,33 @@ def fill_feed_dict(feed_in,feed_dict,pls,idx):
 
     return cxyzs[idx][0],lbls[idx],block_mins[idx]
 
-def build_network(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, is_training):
-    with tf.device('/gpu:{}'.format(0)):
-        with tf.name_scope('tower_{}'.format(0)):
-            feats=graph_conv_pool_v1(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
-                                     cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, False)
-            feats=tf.expand_dims(feats,axis=0)
-            logits=classifier_v2(feats, is_training, FLAGS.num_classes, False, use_bn=False)  # [1,pn,num_classes]
+def build_network(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
+                   cidxs, nidxs, nidxs_lens, nidxs_bgs,
+                   m, pmiu=None,is_training=None):
 
-    for var in tf.trainable_variables():
-        print var
+    rgb_covars = tf.concat([rgbs, covars], axis=1)
+    feats,lf=graph_conv_pool_v3(cxyzs, dxyzs, rgb_covars, vlens, vlens_bgs, vcidxs,
+                             cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, False)
+    feats=tf.expand_dims(feats,axis=0)
+    lf=tf.expand_dims(lf,axis=0)
+    logits=classifier_v3(feats, lf, is_training, FLAGS.num_classes, False, use_bn=False)  # [1,pn,num_classes]
 
     flatten_logits=tf.reshape(logits,[-1,FLAGS.num_classes])  # [pn,num_classes]
+    probs=tf.nn.softmax(flatten_logits)
     preds=tf.argmax(flatten_logits,axis=1)
     ops={}
     ops['feats']=feats
-    ops['probs']=flatten_logits
+    ops['probs']=probs
     ops['preds']=preds
-
     return ops
 
 def build_session():
     pls=build_placeholder()
     pmiu=neighbor_anchors_v2()
     ops=build_network(pls['cxyzs'],pls['dxyzs'],pls['rgbs'],pls['covars'],
-                              pls['vlens'],pls['vlens_bgs'],pls['vcidxs'],
-                              pls['cidxs'],pls['nidxs'],pls['nidxs_lens'],pls['nidxs_lens'],
-                              pmiu.shape[1],pls['pmiu'],pls['is_training'])
+                      pls['vlens'],pls['vlens_bgs'],pls['vcidxs'],
+                      pls['cidxs'],pls['nidxs'],pls['nidxs_lens'],pls['nidxs_bgs'],
+                      pmiu.shape[1],pls['pmiu'],pls['is_training'])
 
     feed_dict=dict()
     feed_dict[pls['pmiu']]=pmiu
@@ -109,7 +108,6 @@ def build_session():
     saver = tf.train.Saver(max_to_keep=500)
     print 'restoring {}'.format(FLAGS.restore_model)
     saver.restore(sess,FLAGS.restore_model)
-
     return sess, pls, ops, feed_dict
 
 def _fetch_all_feed_in_idx(all_feed_in,idx):
@@ -124,10 +122,7 @@ def eval_room_probs(fn,sess,pls,ops,feed_dict):
     all_xyzs,all_lbls,all_probs=[],[],[]
     for i in xrange(len(all_feed_in[0])):
         sxyzs,lbls,block_mins=fill_feed_dict(all_feed_in,feed_dict,pls,i)
-        vars=tf.trainable_variables()
-        probs,preds,var=sess.run([ops['probs'],ops['preds'],vars[0]],feed_dict)
-        output_points('test_result/{}.txt'.format(i),sxyzs,colors[preds,:])
-        print var.flatten()[:5]
+        probs=sess.run(ops['probs'],feed_dict)
 
         all_xyzs.append(sxyzs+block_mins)
         all_lbls.append(lbls)
@@ -147,17 +142,35 @@ def interpolate(sxyzs,sprobs,qxyzs,ratio=1.0/(2*0.075*0.075)):
 
 if __name__=="__main__":
     train_list,test_list=get_block_train_test_split()
-    fn='data/S3DIS/room_block_10_10/'+test_list[0]
     sess, pls, ops, feed_dict=build_session()
-    sxyzs,slbls,sprobs=eval_room_probs(fn,sess,pls,ops,feed_dict)
-    points,labels=read_room_pkl(fn)
-    qxyzs=np.ascontiguousarray(points[:,:3],np.float32)
-    qprobs=interpolate(sxyzs,sprobs,qxyzs)
-    qpreds=np.argmax(qprobs,axis=1)
+    all_preds,all_labels=[],[]
+    fp = np.zeros(13, dtype=np.uint64)
+    tp = np.zeros(13, dtype=np.uint64)
+    fn = np.zeros(13, dtype=np.uint64)
+    for fs in test_list:
+        filename='data/S3DIS/room_block_10_10/'+fs
+        sxyzs,slbls,sprobs=eval_room_probs(filename,sess,pls,ops,feed_dict)
+        points,labels=read_room_pkl(filename)
+        qxyzs=np.ascontiguousarray(points[:,:3],np.float32)
+        qprobs=interpolate(sxyzs,sprobs,qxyzs)
+        qpreds=np.argmax(qprobs,axis=1)
 
-    colors=get_class_colors()
-    spreds=np.argmax(sprobs,axis=1)
-    output_points('test_result/spreds.txt',sxyzs,colors[spreds,:])
-    output_points('test_result/slabel.txt',sxyzs,colors[slbls.flatten(),:])
+        # print np.min(sxyzs,axis=0)
+        # print np.min(qxyzs,axis=0)
+
+        colors=get_class_colors()
+        spreds=np.argmax(sprobs,axis=1)
+        # print labels.shape
+        # print qpreds.shape
+        fp, tp, fn=acc_val(labels.flatten(),qpreds.flatten(),fp,tp,fn)
+
+    iou, miou, oiou, acc, macc, oacc=val2iou(fp,tp,fn)
+    print 'mean iou {:.5} overall iou {:5} \nmean acc {:5} overall acc {:5}'.format(miou, oiou, macc, oacc)
+
+    names = get_class_names()
+    for i in xrange(len(names)):
+        print '{} iou {} acc {}'.format(names[i], iou[i], acc[i])
+    # output_points('test_result/spreds.txt',sxyzs,colors[spreds,:])
+    # output_points('test_result/slabel.txt',sxyzs,colors[slbls.flatten(),:])
     # output_points('test_result/qpreds.txt',qxyzs,colors[qpreds,:])
     # output_points('test_result/qlabel.txt',qxyzs,colors[labels.flatten(),:])

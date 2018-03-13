@@ -124,5 +124,26 @@ void neighborMaxFeatScatterGPU(
         FLT_TYPE *d_osfeats                 // [pn1,fd]
 );
 
+template<typename FLT_TYPE,typename INT_TYPE>
+void concatNonCenterFeatGatherGPU(
+        FLT_TYPE *d_sfeats,                  // [pn*(n-1),2*ifn]
+        INT_TYPE *d_inidxs,                  // [n]
+        INT_TYPE *d_inidxs_lens,             // [pn]
+        INT_TYPE *d_inn_bgs,                 // [pn]
+        INT_TYPE pn,
+        INT_TYPE ifn,
+        FLT_TYPE *d_ifeats                   // [pn,ifn]
+);
+
+template<typename FLT_TYPE,typename INT_TYPE>
+void concatNonCenterFeatScatterGPU(
+        FLT_TYPE *d_ifeats,                   // [pn,ifn]
+        INT_TYPE *d_inidxs,                   // [pn,n]
+        INT_TYPE *d_inidxs_lens,              // [pn]
+        INT_TYPE *d_inn_bgs,                  // [pn]
+        INT_TYPE pn,
+        INT_TYPE ifn,
+        FLT_TYPE *d_onfeats                   // [pn*(n-1),2*ifn]
+);
 
 #endif //POINTUTIL_TFNEIGHBORKERNEL_H

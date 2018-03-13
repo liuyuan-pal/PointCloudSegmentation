@@ -1,10 +1,10 @@
 import tensorflow as tf
 import numpy as np
 
-def compute_iou(label,pred):
-    fp = np.zeros(13, dtype=np.int)
-    tp = np.zeros(13, dtype=np.int)
-    fn = np.zeros(13, dtype=np.int)
+def compute_iou(label,pred,num_classes=13):
+    fp = np.zeros(num_classes, dtype=np.int)
+    tp = np.zeros(num_classes, dtype=np.int)
+    fn = np.zeros(num_classes, dtype=np.int)
     # for l, p in zip(label, pred):
     #     if l == p:
     #         tp[l] += 1
@@ -14,7 +14,7 @@ def compute_iou(label,pred):
 
     correct_mask=label==pred
     incorrect_mask=label!=pred
-    for i in range(13):
+    for i in range(num_classes):
         label_mask=label==i
         pred_mask=pred==i
 
@@ -31,6 +31,41 @@ def compute_iou(label,pred):
 
     return iou, miou, oiou, acc, macc, oacc
 
+
+
+def acc_val(label,pred,fp,tp,fn):
+    # fp = np.zeros(13, dtype=np.int)
+    # tp = np.zeros(13, dtype=np.int)
+    # fn = np.zeros(13, dtype=np.int)
+    # for l, p in zip(label, pred):
+    #     if l == p:
+    #         tp[l] += 1
+    #     else:
+    #         fp[p] += 1
+    #         fn[l] += 1
+
+    correct_mask=(label==pred)
+    incorrect_mask=(label!=pred)
+    for i in range(13):
+        label_mask=label==i
+        pred_mask=pred==i
+
+        tp[i]+=int(np.sum(correct_mask&label_mask))
+        fn[i]+=int(np.sum(incorrect_mask&label_mask))
+        fp[i]+=int(np.sum(incorrect_mask&pred_mask))
+
+    return fp,tp,fn
+
+
+def val2iou(fp,tp,fn):
+    iou = tp / (fp + fn + tp + 1e-6).astype(np.float)
+    miou=np.mean(iou)
+    oiou=np.sum(tp) / float(np.sum(tp + fn + fp))
+    acc = tp / (tp + fn + 1e-6)
+    macc = np.mean(acc)
+    oacc = np.sum(tp) / float(np.sum(tp+fn))
+
+    return iou, miou, oiou, acc, macc, oacc
 
 def log_str(message,filename):
     with open(filename,'a') as f:

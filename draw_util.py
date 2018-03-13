@@ -25,6 +25,18 @@ def get_class_colors():
     return colors
 
 
+def get_semantic3d_class_colors():
+    return np.array([ [0,0,0],
+                      [123,104,238], # man-made terrain
+                      [152,251,152], # natural terrain
+                      [0,128,0],     # high vegetation
+                      [0,255,255],   # low vegetation
+                      [255,140,0],   # building
+                      [255,255,0],   # hard scape
+                      [250,240,230], # scanning artefacts
+                      [148,0,211],   # car
+                      ])
+
 def output_activation(feature, filename, dim, pts):
     pt_num=pts.shape[0]
     # indices = np.argsort(-feature[:, dim])

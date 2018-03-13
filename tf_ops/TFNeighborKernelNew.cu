@@ -232,6 +232,131 @@ void neighborMaxFeatScatterGPU(
 }
 
 
+template<typename FLT_TYPE,typename INT_TYPE>
+__global__ void concatNonCenterFeatScatter(
+        FLT_TYPE *ifeats,                   // [pn,ifn]
+        INT_TYPE *inidxs,                   // [pn,n]
+        INT_TYPE *inidxs_lens,              // [pn]
+        INT_TYPE *inn_bgs,                  // [pn]
+        INT_TYPE pn,
+        INT_TYPE ifn,
+        FLT_TYPE *onfeats                   // [pn*(n-1),2*ifn]
+)
+{
+    int pi = threadIdx.x + blockIdx.x*blockDim.x;
+    if(pi>=pn) return;
+    INT_TYPE nn_bg = inn_bgs[pi];
+    INT_TYPE nn = inidxs_lens[pi];
+
+//    printf("nn_bg %d nn %d pi %d ifn %d\n",nn_bg,nn,pi,ifn);
+
+    FLT_TYPE* cifeats=&ifeats[pi*ifn];
+    INT_TYPE* inidxs_p=&inidxs[nn_bg];
+    FLT_TYPE* onfeats_p=&onfeats[(nn_bg-pi)*ifn*2];
+
+    for(int ni=0;ni<nn;ni++)
+    {
+        int idx=(*inidxs_p);
+        inidxs_p++;
+        if(idx==pi) continue;
+        FLT_TYPE* niloc = &ifeats[idx*ifn];
+        for(int li=0;li<ifn;li++)
+        {
+            onfeats_p[li]=cifeats[li];
+            onfeats_p[li+ifn]=niloc[li];
+        }
+        onfeats_p+=ifn*2;
+    }
+}
+
+
+template<typename FLT_TYPE,typename INT_TYPE>
+__global__ void concatNonCenterFeatGather(
+        FLT_TYPE *sfeats,                  // [pn*(n-1),2*ifn]
+        INT_TYPE *inidxs,                  // [n]
+        INT_TYPE *inidxs_lens,             // [pn]
+        INT_TYPE *inn_bgs,                 // [pn]
+        INT_TYPE pn,
+        INT_TYPE ifn,
+        FLT_TYPE *ifeats                   // [pn,ifn]
+)
+{
+    int pi = threadIdx.x + blockIdx.x*blockDim.x;
+    if(pi>=pn) return;
+    unsigned int nn_bg = inn_bgs[pi];
+    unsigned int nn = inidxs_lens[pi];
+
+    // current minus gradient
+    FLT_TYPE *cifeats_p=&ifeats[pi*ifn];
+    FLT_TYPE *sfeats_p=&sfeats[(nn_bg-pi)*ifn*2];
+    for(unsigned int ni=0;ni<nn-1;ni++)
+    {
+        for(unsigned int ii=0;ii<ifn;ii++)
+            cifeats_p[ii]+=sfeats_p[ii];
+        sfeats_p+=ifn*2;
+    }
+    __syncthreads();
+
+    unsigned int* inidxs_p=&(inidxs[nn_bg]);
+    sfeats_p=&sfeats[(nn_bg-pi)*ifn*2];
+    for(unsigned int ni=0;ni<nn;ni++)
+    {
+        int idx=(*inidxs_p);
+        inidxs_p++;
+        if(idx==pi) continue;
+        FLT_TYPE* nifeats=&ifeats[idx*ifn];
+        for(unsigned int ii=0;ii<ifn;ii++)
+            atomicAdd(&(nifeats[ii]),sfeats_p[ii+ifn]);
+        sfeats_p+=ifn*2;
+    }
+}
+
+template<typename FLT_TYPE,typename INT_TYPE>
+void concatNonCenterFeatScatterGPU(
+        FLT_TYPE *d_ifeats,                   // [pn,ifn]
+        INT_TYPE *d_inidxs,                   // [pn,n]
+        INT_TYPE *d_inidxs_lens,              // [pn]
+        INT_TYPE *d_inn_bgs,                  // [pn]
+        INT_TYPE pn,
+        INT_TYPE ifn,
+        FLT_TYPE *d_onfeats                   // [pn*(n-1),2*ifn]
+)
+{
+
+//    printf("here\n");
+    int block_num=pn/1024;
+    if(pn%1024>0) block_num++;
+    dim3 block_dim(block_num);
+    dim3 thread_dim(1024);
+//    printf("here\n");
+    concatNonCenterFeatScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>
+            (d_ifeats,d_inidxs,d_inidxs_lens,d_inn_bgs,pn,ifn,d_onfeats);
+//    printf("forward end\n");
+}
+
+template<typename FLT_TYPE,typename INT_TYPE>
+void concatNonCenterFeatGatherGPU(
+        FLT_TYPE *d_sfeats,                  // [pn*(n-1),2*ifn]
+        INT_TYPE *d_inidxs,                  // [n]
+        INT_TYPE *d_inidxs_lens,             // [pn]
+        INT_TYPE *d_inn_bgs,                 // [pn]
+        INT_TYPE pn,
+        INT_TYPE ifn,
+        FLT_TYPE *d_ifeats                   // [pn,ifn]
+)
+{
+//    printf("here\n");
+    int block_num=pn/1024;
+    if(pn%1024>0) block_num++;
+    dim3 block_dim(block_num);
+    dim3 thread_dim(1024);
+//    printf("here\n");
+    gpuErrchk(cudaMemset(d_ifeats,0,pn*ifn*sizeof(float)))
+    concatNonCenterFeatGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>
+               (d_sfeats,d_inidxs,d_inidxs_lens,d_inn_bgs,pn,ifn,d_ifeats);
+//    printf("backward end\n");
+}
+
 template void neighborSumFeatGatherGPU<float,unsigned int>
         (float*, unsigned int*,unsigned int*,unsigned int,unsigned int,unsigned int,float*);
 template void neighborSumFeatScatterGPU<float,unsigned int>
@@ -240,3 +365,8 @@ template void neighborMaxFeatGatherGPU<float,unsigned int>
         (float*, unsigned int*,unsigned int*,unsigned int,unsigned int,float*,unsigned int*);
 template void neighborMaxFeatScatterGPU<float,unsigned int>
         (float*, unsigned int*,unsigned int*,unsigned int,unsigned int,unsigned int,float*);
+
+template void concatNonCenterFeatScatterGPU<float,unsigned int>
+        (float*, unsigned int*,unsigned int*,unsigned int*,unsigned int,unsigned int,float*);
+template void concatNonCenterFeatGatherGPU<float,unsigned int>
+        (float*, unsigned int*,unsigned int*,unsigned int*,unsigned int,unsigned int,float*);
