@@ -357,6 +357,62 @@ void concatNonCenterFeatGatherGPU(
 //    printf("backward end\n");
 }
 
+template<typename INT_TYPE>
+__global__ void eliminateCenter(
+        INT_TYPE *inidxs,                   // [n]
+        INT_TYPE *inidxs_lens,              // [pn]
+        INT_TYPE *inidxs_bgs,               // [pn]
+        INT_TYPE pn,
+        INT_TYPE *onidxs,                   // [n-pn]
+        INT_TYPE *onidxs_lens,              // [pn]
+        INT_TYPE *onidxs_bgs,               // [pn]
+        INT_TYPE *ocidxs                    // [n-pn]
+
+)
+{
+    int pi = threadIdx.x + blockIdx.x*blockDim.x;
+    if(pi>=pn) return;
+
+    INT_TYPE nn_bg=inidxs_bgs[pi];
+    onidxs_bgs[pi]=nn_bg-pi;
+
+    INT_TYPE nn_size=inidxs_lens[pi];
+    onidxs_lens[pi]=nn_size-1;
+
+    INT_TYPE* onidxs_p=&onidxs[nn_bg-pi];
+    INT_TYPE* inidxs_p=&inidxs[nn_bg];
+    INT_TYPE* ocidxs_p=&ocidxs[nn_bg-pi];
+    for(int ni=0;ni<nn_size;ni++)
+    {
+        if(inidxs_p[ni]==pi) continue;
+        (*onidxs_p)=inidxs_p[ni];
+        (*ocidxs_p)=pi;
+        onidxs_p++;
+        ocidxs_p++;
+    }
+}
+
+template<typename INT_TYPE>
+void eliminateCenterGPU(
+        INT_TYPE *inidxs,                   // [n]
+        INT_TYPE *inidxs_lens,              // [pn]
+        INT_TYPE *inidxs_bgs,               // [pn]
+        INT_TYPE pn,
+        INT_TYPE *onidxs,                   // [n-pn]
+        INT_TYPE *onidxs_lens,              // [pn]
+        INT_TYPE *onidxs_bgs,               // [pn]
+        INT_TYPE *ocidxs                    // [n-pn]
+
+)
+{
+    int block_num=pn/1024;
+    if(pn%1024>0) block_num++;
+    dim3 block_dim(block_num);
+    dim3 thread_dim(1024);
+    eliminateCenter<INT_TYPE> <<<block_dim,thread_dim>>>
+              (inidxs,inidxs_lens,inidxs_bgs,pn,onidxs,onidxs_lens,onidxs_bgs,ocidxs);
+}
+
 template void neighborSumFeatGatherGPU<float,unsigned int>
         (float*, unsigned int*,unsigned int*,unsigned int,unsigned int,unsigned int,float*);
 template void neighborSumFeatScatterGPU<float,unsigned int>
@@ -370,3 +426,6 @@ template void concatNonCenterFeatScatterGPU<float,unsigned int>
         (float*, unsigned int*,unsigned int*,unsigned int*,unsigned int,unsigned int,float*);
 template void concatNonCenterFeatGatherGPU<float,unsigned int>
         (float*, unsigned int*,unsigned int*,unsigned int*,unsigned int,unsigned int,float*);
+
+template void eliminateCenterGPU<unsigned int>
+        (unsigned int*,unsigned int*,unsigned int*,unsigned int,unsigned int*,unsigned int*,unsigned int*,unsigned int*);

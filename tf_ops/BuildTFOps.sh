@@ -47,8 +47,7 @@ tf_files="TFNeighborGather.cc
           TFLocationWeightSumForward.cc
           TFNeighborSumFeatGather.cc
           TFNeighborMaxFeatGather.cc
-          TFNeighborConcatNonCenterGather.cc
-          TFNeighborConcatNonCenterScatter.cc
+          TFNeighborEliminateCenter.cc
           "
 
 g++ -std=c++11 -shared build/TFNeighborKernel.cu.o build/TFNeighborKernelNew.cu.o \

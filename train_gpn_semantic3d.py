@@ -6,7 +6,7 @@ import os
 import tensorflow as tf
 from model import graph_conv_pool_v3,classifier_v3
 from train_util import *
-from io_util import get_semantic3d_block_train_test_split,read_pkl,get_semantic3d_class_names
+from io_util import get_semantic3d_block_train_test_split,read_pkl,get_semantic3d_class_names,read_fn_hierarchy
 from provider import Provider,default_unpack_feats_labels
 from draw_util import output_points,get_semantic3d_class_colors
 from functools import partial
@@ -178,6 +178,11 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
             begin_time=time.time()
             total_losses=[]
 
+        # the generated training set is too large
+        # so every 12000 examples we test once and save the model
+        if i>3000:
+            break
+
     log_str('epoch {} cost {} s'.format(epoch_num, time.time()-epoch_begin), FLAGS.log_file)
 
 
@@ -282,7 +287,7 @@ def build_placeholder(num_gpus):
 
 def train():
     train_list,test_list=get_semantic3d_block_train_test_split()
-    train_list=['data/Semantic3D.Net/block/sampled/train/'+fn for fn in train_list]
+    train_list=['data/Semantic3D.Net/block/sampled/train_merge/{}.pkl'.format(i) for i in xrange(225)]
     test_list=['data/Semantic3D.Net/block/sampled/test/'+fn for fn in test_list]
     read_fn=lambda model,filename: read_pkl(filename)
 
@@ -292,7 +297,7 @@ def train():
         pls=build_placeholder(FLAGS.num_gpus)
         pmiu=neighbor_anchors_v2()
 
-        batch_num_per_epoch=2000/FLAGS.num_gpus
+        batch_num_per_epoch=5000/FLAGS.num_gpus
         ops=train_ops(pls['cxyzs'],pls['dxyzs'],pls['rgbs'],pls['covars'],
                       pls['vlens'],pls['vlens_bgs'],pls['vcidxs'],
                       pls['cidxs'],pls['nidxs'],pls['nidxs_lens'],pls['nidxs_bgs'],

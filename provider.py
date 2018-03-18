@@ -1,7 +1,7 @@
 import threading
 import random
 import numpy as np
-
+import time
 
 def default_batch_fn(file_data, cur_idx, data_indices, require_size):
     '''
@@ -77,6 +77,7 @@ class Provider(threading.Thread):
                     exit(0)
 
                 self.data_cache.append(self.read_fn(model, self.file_list[idx]))
+
                 self.mutex.release()
                 self.items.release()
 
@@ -158,4 +159,7 @@ class Provider(threading.Thread):
                 break
 
         return batch_data
+
+    def report_status(self):
+        print 'cd {} cf {}'.format(self.cur_data_index,self.file_cur)
 

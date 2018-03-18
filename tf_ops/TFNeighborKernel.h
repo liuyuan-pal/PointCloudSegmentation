@@ -146,4 +146,17 @@ void concatNonCenterFeatScatterGPU(
         FLT_TYPE *d_onfeats                   // [pn*(n-1),2*ifn]
 );
 
+template<typename INT_TYPE>
+void eliminateCenterGPU(
+        INT_TYPE *inidxs,                   // [n]
+        INT_TYPE *inidxs_lens,              // [pn]
+        INT_TYPE *inidxs_bgs,               // [pn]
+        INT_TYPE pn,
+        INT_TYPE *onidxs,                   // [n-pn]
+        INT_TYPE *onidxs_lens,              // [pn]
+        INT_TYPE *onidxs_bgs,               // [pn]
+        INT_TYPE *ocidxs                    // [n-pn]
+
+);
+
 #endif //POINTUTIL_TFNEIGHBORKERNEL_H

@@ -1,0 +1,4 @@
+MarketplaceFeldkirch_Station4_rgb_intensity-reduced 17
+sg27_station10_rgb_intensity-reduced 11
+sg28_Station2_rgb_intensity-reduced 84
+StGallenCathedral_station6_rgb_intensity-reduced 25

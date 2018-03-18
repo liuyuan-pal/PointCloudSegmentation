@@ -2,7 +2,7 @@ import numpy as np
 import libPointUtil
 import cPickle
 import random
-from aug_util import sample_block,normalize_block,normalize_block_hierarchy,sample_block_v2,normalize_hierarchy_parallel
+from aug_util import sample_block,normalize_block,normalize_block_hierarchy,sample_block_v2
 import os
 import time
 import h5py
@@ -141,38 +141,43 @@ def read_fn_hierarchy(model, filename,
                       bstride=1.5,
                       min_pn=1024,
                       resample_ratio_low=0.8,
-                      resample_ratio_high=1.0):
+                      resample_ratio_high=1.0,
+                      covar_ds_stride=0.03,
+                      covar_nn_size=0.1,
+                      max_pt_num=10240):
 
-    # bg=time.time()
     if filename.endswith('.pkl'):
         points,labels=read_room_pkl(filename) # [n,6],[n,1]
     else:
         points,labels=read_room_h5(filename) # [n,6],[n,1]
-    # print 'read cost {} s'.format(time.time()-bg)
 
     if model=='train':
         if presample:
             xyzs, rgbs, covars, lbls=sample_block_v2(points,labels,sstride,bsize,bstride,min_pn=min_pn,
-                                                  use_rescale=True,use_flip=True,use_rotate=use_rotate)
+                                                     use_rescale=True,use_flip=True,use_rotate=use_rotate,
+                                                     covar_nn_size=covar_nn_size)
         else:
             xyzs, rgbs, covars, lbls=sample_block(points,labels,sstride,bsize,bstride,min_pn=min_pn,
-                                                  use_rescale=True,use_flip=True,use_rotate=use_rotate)
+                                                  use_rescale=True,use_flip=True,use_rotate=use_rotate,
+                                                  covar_ds_stride=covar_ds_stride,covar_nn_size=covar_nn_size)
 
         cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = \
             normalize_block_hierarchy(xyzs,rgbs,covars,lbls,bsize=bsize,nr1=nr1,nr2=nr2,nr3=nr3,vc1=vc1,vc2=vc2,
-                resample=True,jitter_color=True,resample_low=resample_ratio_low,resample_high=resample_ratio_high)
-    else:
-        # bg=time.time()
-        if presample:
-            xyzs, rgbs, covars, lbls=sample_block_v2(points,labels,sstride,bsize,bsize,min_pn=min_pn/2)
-        else:
-            xyzs, rgbs, covars, lbls=sample_block(points,labels,sstride,bsize,bsize,min_pn=min_pn/2)
-        # print 'sample cost {} s'.format(time.time()-bg)
+                                      resample=True,jitter_color=True,
+                                      resample_low=resample_ratio_low,resample_high=resample_ratio_high,
+                                      max_pt_num=max_pt_num)
 
-        # bg=time.time()
+    else:
+        if presample:
+            xyzs, rgbs, covars, lbls=sample_block_v2(points,labels,sstride,bsize,bsize,min_pn=min_pn/2,
+                                                     covar_nn_size=covar_nn_size)
+        else:
+            xyzs, rgbs, covars, lbls=sample_block(points,labels,sstride,bsize,bsize,min_pn=min_pn/2,
+                                                  covar_ds_stride=covar_ds_stride,covar_nn_size=covar_nn_size)
+
         cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = \
-            normalize_block_hierarchy(xyzs,rgbs,covars,lbls,bsize=bsize,nr1=nr1,nr2=nr2,nr3=nr3,vc1=vc1,vc2=vc2)
-        # print 'norm cost {} s'.format(time.time()-bg)
+            normalize_block_hierarchy(xyzs,rgbs,covars,lbls,bsize=bsize,nr1=nr1,nr2=nr2,nr3=nr3,vc1=vc1,vc2=vc2,
+                                      max_pt_num=max_pt_num)
 
     return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens,block_mins
 
@@ -195,6 +200,15 @@ def get_semantic3d_block_train_test_split():
                 train_list.append(line)
 
     return train_list,test_list
+
+
+def get_semantic3d_testset():
+    with open('cached/semantic3d_test_stems.txt','r') as f:
+        lines=f.readlines()
+        fns=[fn.strip('\n').split(' ')[0] for fn in lines]
+        pns=[int(fn.strip('\n').split(' ')[1]) for fn in lines]
+
+    return fns,pns
 
 
 def test_data_iter():
@@ -550,5 +564,43 @@ def test_semantic_hierarchy_speed():
     for i in xrange(10):
         read_fn_hierarchy('test',filename)
 
+def test_semantic_read_pkl():
+    from provider import Provider,default_unpack_feats_labels
+    train_list,test_list=get_semantic3d_block_train_test_split()
+    train_list=['data/Semantic3D.Net/block/sampled/train_merge/{}.pkl'.format(i) for i in xrange(231)]
+    test_list=['data/Semantic3D.Net/block/sampled/test/'+fn for fn in test_list]
+    simple_read_fn=lambda model,filename: read_pkl(filename)
+
+    train_provider = Provider(train_list,'train',4,simple_read_fn)
+    # test_provider = Provider(test_list,'test',4,simple_read_fn)
+
+    print len(train_list)
+    try:
+        # begin = time.time()
+        # i = 0
+        # for data in test_provider:
+        #     i += 1
+        #     pass
+        # print 'batch_num {}'.format(i * 4)
+        # print 'test set cost {} s'.format(time.time() - begin)
+
+        begin = time.time()
+        i = 0
+        for data in train_provider:
+            i+=1
+            if i%2500==0:
+                print 'cost {} s'.format(time.time()-begin)
+
+        print 'batch_num {}'.format(i * 4)
+        print 'train set cost {} s'.format(time.time() - begin)
+
+
+    finally:
+        print 'done'
+        train_provider.close()
+        test_provider.close()
+
+
+
 if __name__ =="__main__":
-    test_semantic_hierarchy_speed()
+    test_semantic_read_pkl()
