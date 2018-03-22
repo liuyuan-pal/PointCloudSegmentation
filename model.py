@@ -379,6 +379,7 @@ def graph_conv_pool_block(ifeats,stage_idx,layer_idx,ifn,ofn,num_out,
         fc=tf.concat([fc,ifeats], axis=1)
     return fc
 
+
 def graph_diff_conv_pool_block(ifeats,stage_idx,layer_idx,ifn,ofn,num_out,use_diff,
                                nidxs,nidxs_lens,nidxs_bgs,cidxs,
                                m,lw,lw_sum,reuse):
@@ -432,6 +433,7 @@ def graph_conv_pool_stage(stage_idx, cxyzs, dxyz, feats, cidxs, nidxs, nidxs_len
                                                            scope='{}_gfc_final'.format(stage_idx))
 
     return fc_final, cfeats  # cfeats: [pn,fc_dims+gxyz_dim+feats_dim]
+
 
 
 def graph_diff_conv_pool_stage(stage_idx, cxyzs, dxyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs,
@@ -520,7 +522,7 @@ def graph_conv_pool_v1(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nid
         return upf0,
 
 
-def graph_conv_pool_v2(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, reuse=False):
+def graph_conv_pool_v2_deeper(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, reuse=False):
     with tf.name_scope('graph_conv_pool_net'):
         with tf.name_scope('conv_stage0'):
             # feats0=tf.concat([rgbs,covars],axis=1)
@@ -713,6 +715,7 @@ def graph_conv_pool_v5(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nid
 
         return upf0,lf
 
+
 def classifier(feats, pfeats, is_training, num_classes, reuse=False, use_bn=False):
     '''
 
@@ -832,6 +835,7 @@ def classifier_v4(feats, pfeats, is_training, num_classes, reuse=False, use_bn=F
 
     return logits
 
+
 def classifier_v2(feats, is_training, num_classes, reuse=False, use_bn=False):
     '''
 
@@ -869,41 +873,345 @@ def classifier_v2(feats, is_training, num_classes, reuse=False, use_bn=False):
 
 
 def graph_probs_diffusion(probs, feats, nidxs, nidxs_lens, nidxs_bgs, embed_dim, fdims, probs_dim, apply_num, reuse):
-    with framework.arg_scope([tf.contrib.layers.fully_connected],activation_fn=tf.nn.relu,reuse=reuse):
-        embedded_feats=tf.contrib.layers.fully_connected(feats,num_outputs=embed_dim,scope='diffuse_fc_embed')
+    with tf.name_scope("diffusion"):
+        with framework.arg_scope([tf.contrib.layers.fully_connected],activation_fn=tf.nn.relu,reuse=reuse):
+            embedded_feats=tf.contrib.layers.fully_connected(feats,num_outputs=embed_dim,scope='diffuse_fc_embed')
 
-        nc_nidxs, nc_nidxs_lens, nc_nidxs_bgs, nc_cidxs=graph_eliminate_center(nidxs,nidxs_lens,nidxs_bgs)
-        scatter_feats1=graph_unpool(embedded_feats,nc_nidxs_lens,nc_nidxs_bgs,nc_cidxs)
-        scatter_feats2=graph_neighbor_scatter(embedded_feats,nc_nidxs,nc_nidxs_lens,nc_nidxs_bgs)
-        scatter_feats=tf.concat([scatter_feats1,scatter_feats2],axis=1)
+            nc_nidxs, nc_nidxs_lens, nc_nidxs_bgs, nc_cidxs=graph_eliminate_center(nidxs,nidxs_lens,nidxs_bgs)
+            scatter_feats1=graph_unpool(embedded_feats,nc_nidxs_lens,nc_nidxs_bgs,nc_cidxs)
+            scatter_feats2=graph_neighbor_scatter(embedded_feats,nc_nidxs,nc_nidxs_lens,nc_nidxs_bgs)
+            scatter_feats=tf.concat([scatter_feats1,scatter_feats2],axis=1)
 
-        for i,fd in enumerate(fdims):
-            scatter_feats=tf.contrib.layers.fully_connected(scatter_feats,num_outputs=fd,scope='diffuse_fc_{}'.format(i))
+            for i,fd in enumerate(fdims):
+                scatter_feats=tf.contrib.layers.fully_connected(scatter_feats,num_outputs=fd,scope='diffuse_fc_{}'.format(i))
 
-        graph_weights=tf.contrib.layers.fully_connected(feats,num_outputs=probs_dim,scope='diffuse_fc_weight',
-                                                        activation_fn=tf.nn.sigmoid)
+            graph_weights=tf.contrib.layers.fully_connected(scatter_feats,num_outputs=probs_dim,scope='diffuse_fc_weight',
+                                                            activation_fn=tf.nn.sigmoid)    # use sigmoid to rescale to [0,1]
 
-        for _ in xrange(apply_num):
-            scatter_probs=graph_neighbor_scatter(probs, nc_nidxs, nc_nidxs_lens, nc_nidxs_bgs)
-            weighted_probs=scatter_probs*graph_weights  # A*phi
-            gathered_probs=graph_neighbor_sum(weighted_probs,nc_nidxs_lens,nc_nidxs_bgs,nc_cidxs)   # [pn,p]
+            for _ in xrange(apply_num):
+                scatter_probs=graph_neighbor_scatter(probs, nc_nidxs, nc_nidxs_lens, nc_nidxs_bgs)
+                weighted_probs=scatter_probs*graph_weights  # A*phi
+                gathered_probs=graph_neighbor_sum(weighted_probs,nc_nidxs_lens,nc_nidxs_bgs,nc_cidxs)   # [pn,p]
 
-            degree_weights=graph_neighbor_sum(graph_weights,nc_nidxs_lens,nc_nidxs_bgs,nc_cidxs)    # [pn,p]
-            probs=gathered_probs+(1.0-degree_weights)*probs
+                degree_weights=graph_neighbor_sum(graph_weights,nc_nidxs_lens,nc_nidxs_bgs,nc_cidxs)    # [pn,p]
+                probs=gathered_probs+(1.0-degree_weights)*probs
 
         return probs
 
 
+def graph_pmiu_conv_pool_stage(stage_idx, cxyzs, dxyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs,
+                               m, feats_dim, gxyz_dim, gc_dims, fc_dims, use_dynamics, gfc_dims, final_dim, pmiu, lm, reuse):
+    with tf.name_scope('gc_xyz{}'.format(stage_idx)):
+        xyz_gc,lw,lw_sum=graph_conv_xyz(cxyzs,cidxs,nidxs,nidxs_lens,nidxs_bgs,'xyz_gc{}'.format(stage_idx),
+                                        3,m,gxyz_dim,compute_lw=True,pmiu=pmiu)
+
+        llw,llw_sum=graph_learn_pmiu(cxyzs,lm,'xyz_lpmiu{}'.format(stage_idx),nidxs,nidxs_lens,nidxs_bgs)
+
+        cfeats=tf.concat([xyz_gc, feats], axis=1)
+        cdim=feats_dim+gxyz_dim
+
+        block_fn_fixed=partial(graph_conv_pool_block,nidxs=nidxs,nidxs_lens=nidxs_lens,nidxs_bgs=nidxs_bgs,
+                                               cidxs=cidxs,m=m,lw=lw,lw_sum=lw_sum,reuse=reuse)
+        block_fn_dynamic=partial(graph_conv_pool_block,nidxs=nidxs,nidxs_lens=nidxs_lens,nidxs_bgs=nidxs_bgs,
+                                               cidxs=cidxs,m=lm,lw=llw,lw_sum=llw_sum,reuse=reuse)
+        layer_idx=1
+        for gd,fd,ud in zip(gc_dims,fc_dims,use_dynamics):
+            block_fn=block_fn_dynamic if ud else block_fn_fixed
+            cfeats=block_fn(cfeats,stage_idx,layer_idx,cdim,gd,fd)
+            layer_idx+=1
+            cdim+=fd
+
+        with framework.arg_scope([tf.contrib.layers.fully_connected],activation_fn=tf.nn.relu,reuse=reuse):
+            with tf.name_scope('fc_global{}'.format(stage_idx)):
+                fc=tf.concat([cfeats, dxyz],axis=1)
+                for i,gfd in enumerate(gfc_dims):
+                    fc=tf.contrib.layers.fully_connected(fc,num_outputs=gfd,scope='{}_gfc{}'.format(stage_idx,i))
+                fc_final=tf.contrib.layers.fully_connected(fc,num_outputs=final_dim,activation_fn=None,
+                                                           scope='{}_gfc_final'.format(stage_idx))
+
+    return fc_final, cfeats  # cfeats: [pn,fc_dims+gxyz_dim+feats_dim]
+
+def graph_conv_pool_v6_learn_pmiu(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, reuse=False):
+    with tf.name_scope('graph_conv_pool_net'):
+        with tf.name_scope('conv_stage0'):
+            # feats0=tf.concat([rgbs,covars],axis=1)
+            # fc0 [pn0,32] lf0 [pn0,76]
+            fc0,lf0=graph_pmiu_conv_pool_stage(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
+                                               m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [False, False, True],
+                                               [32, 32, 32], 32, pmiu, 8, reuse)
+            # fc0_pool [pn1,]
+            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+
+        with tf.name_scope('conv_stage1'):
+            # fc1 [pn1,128] lf1 [pn1,480]
+            fc1,lf1=graph_pmiu_conv_pool_stage(1,cxyzs[1],dxyzs[1],fc0_pool,cidxs[1],nidxs[1],nidxs_lens[1],nidxs_bgs[1],
+                                               m, 32, 8, [32, 32, 32, 64, 64, 64], [32, 32, 32, 64, 64, 64],
+                                               [False, False, True, False, False, True],
+                                               [128, 128, 128], 128, pmiu, 8, reuse)
+            # fc1_pool [pn2,]
+            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+
+        with tf.name_scope('conv_stage2'):
+            # fc2 [pn2,256] lf2 [pn2,648]
+            fc2,lf2=graph_pmiu_conv_pool_stage(2,cxyzs[2],cxyzs[2],fc1_pool,cidxs[2],nidxs[2],nidxs_lens[2],nidxs_bgs[2],
+                                               m, 128, 8, [128, 128, 256], [128, 128, 256], [False, False, True],
+                                               [256, 256], 256, pmiu, 8, reuse)
+            # [1,256]
+            fc2_pool=tf.reduce_max(fc2,axis=0)
 
 
+        with tf.name_scope('unpool_stage2'):
+            # [pn3,256]
+            upfeats2=tf.tile(tf.expand_dims(fc2_pool,axis=0),[tf.shape(fc2)[0],1])
+            # [pn3,256+256+648=1260] [fc2_pool,fc2,lf2]
+            upf2=tf.concat([upfeats2,fc2,lf2],axis=1)
+
+        with tf.name_scope('unpool_stage1'):
+            # [pn2,1260]
+            upfeats1=graph_unpool_stage(1,upf2,vlens[1],vlens_bgs[1],vcidxs[1])
+            # [pn2,1260+128+480=1868] [fc2_pool,fc2,lf2,fc1,lf1]
+            upf1=tf.concat([upfeats1,fc1,lf1],axis=1)
+
+        with tf.name_scope('unpool_stage0'):
+            # [pn1,1868+32+76=1976] [fc2_pool,fc2,lf2,fc1,lf1,fc0,lf0]
+            upfeats0=graph_unpool_stage(0,upf1,vlens[0],vlens_bgs[0],vcidxs[0])
+            upf0=tf.concat([upfeats0,fc0,lf0],axis=1)
+
+        lf=tf.concat([fc0, lf0], axis=1)
+
+        return upf0,lf
 
 
+def graph_pmiu_nosum_conv_pool_stage(stage_idx, cxyzs, dxyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs,
+                                     m, feats_dim, gxyz_dim, gc_dims, fc_dims, use_dynamics, gfc_dims, final_dim, pmiu, lm, reuse):
+    with tf.name_scope('gc_xyz{}'.format(stage_idx)):
+        xyz_gc,lw,lw_sum=graph_conv_xyz(cxyzs,cidxs,nidxs,nidxs_lens,nidxs_bgs,'xyz_gc{}'.format(stage_idx),
+                                        3,m,gxyz_dim,compute_lw=True,pmiu=pmiu)
+
+        # llw,llw_sum=graph_learn_pmiu(cxyzs,lm,'xyz_lpmiu{}'.format(stage_idx),nidxs,nidxs_lens,nidxs_bgs)
+
+        cfeats=tf.concat([xyz_gc, feats], axis=1)
+        cdim=feats_dim+gxyz_dim
+
+        block_fn_fixed=partial(graph_diff_conv_pool_block,nidxs=nidxs,nidxs_lens=nidxs_lens,nidxs_bgs=nidxs_bgs,
+                                               cidxs=cidxs,m=m,lw=lw,lw_sum=lw_sum,reuse=reuse)
+        # block_fn_dynamic=partial(graph_diff_conv_pool_block,nidxs=nidxs,nidxs_lens=nidxs_lens,nidxs_bgs=nidxs_bgs,
+        #                                        cidxs=cidxs,m=lm,lw=llw,lw_sum=llw_sum,reuse=reuse)
+        layer_idx=1
+        for gd,fd,ud in zip(gc_dims,fc_dims,use_dynamics):
+            # block_fn=block_fn_dynamic if ud else block_fn_fixed
+            cfeats=block_fn_fixed(cfeats,stage_idx,layer_idx,cdim,gd,fd,False)
+            layer_idx+=1
+            cdim+=fd
+
+        with framework.arg_scope([tf.contrib.layers.fully_connected],activation_fn=tf.nn.relu,reuse=reuse):
+            with tf.name_scope('fc_global{}'.format(stage_idx)):
+                fc=tf.concat([cfeats, dxyz],axis=1)
+                for i,gfd in enumerate(gfc_dims):
+                    fc=tf.contrib.layers.fully_connected(fc,num_outputs=gfd,scope='{}_gfc{}'.format(stage_idx,i))
+                fc_final=tf.contrib.layers.fully_connected(fc,num_outputs=final_dim,activation_fn=None,
+                                                           scope='{}_gfc_final'.format(stage_idx))
+
+    return fc_final, cfeats  # cfeats: [pn,fc_dims+gxyz_dim+feats_dim]
+
+def graph_pmiu_nosum_all_conv_pool_stage(stage_idx, cxyzs, dxyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs,
+                                         m, feats_dim, gxyz_dim, gc_dims, fc_dims, use_dynamics, gfc_dims, final_dim, pmiu, lm, reuse):
+    with tf.name_scope('gc_xyz{}'.format(stage_idx)):
+        xyz_gc,lw,lw_sum=graph_conv_xyz(cxyzs,cidxs,nidxs,nidxs_lens,nidxs_bgs,'xyz_gc{}'.format(stage_idx),
+                                        3,m,gxyz_dim,compute_lw=True,pmiu=pmiu,no_sum=True)
+        xyz_gc=tf.contrib.layers.fully_connected(xyz_gc,num_outputs=gxyz_dim,scope='xyz_fc{}'.format(stage_idx)
+                                                 ,activation_fn=tf.nn.relu,reuse=reuse)
+
+        cfeats=tf.concat([xyz_gc, feats], axis=1)
+        cdim=feats_dim+gxyz_dim
+
+        block_fn_fixed=partial(graph_diff_conv_pool_block,nidxs=nidxs,nidxs_lens=nidxs_lens,nidxs_bgs=nidxs_bgs,
+                                               cidxs=cidxs,m=m,lw=lw,lw_sum=lw_sum,reuse=reuse)
+        layer_idx=1
+        for gd,fd,ud in zip(gc_dims,fc_dims,use_dynamics):
+            cfeats=block_fn_fixed(cfeats,stage_idx,layer_idx,cdim,gd,fd,False)
+            layer_idx+=1
+            cdim+=fd
+
+        with framework.arg_scope([tf.contrib.layers.fully_connected],activation_fn=tf.nn.relu,reuse=reuse):
+            with tf.name_scope('fc_global{}'.format(stage_idx)):
+                fc=tf.concat([cfeats, dxyz],axis=1)
+                for i,gfd in enumerate(gfc_dims):
+                    fc=tf.contrib.layers.fully_connected(fc,num_outputs=gfd,scope='{}_gfc{}'.format(stage_idx,i))
+                fc_final=tf.contrib.layers.fully_connected(fc,num_outputs=final_dim,activation_fn=None,
+                                                           scope='{}_gfc_final'.format(stage_idx))
+
+    return fc_final, cfeats  # cfeats: [pn,fc_dims+gxyz_dim+feats_dim]
 
 
+def graph_conv_pool_v7_nosum_lpmiu(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, reuse=False):
+    with tf.name_scope('graph_conv_pool_net'):
+        with tf.name_scope('conv_stage0'):
+            # feats0=tf.concat([rgbs,covars],axis=1)
+            # fc0 [pn0,32] lf0 [pn0,76]
+            fc0,lf0=graph_pmiu_nosum_conv_pool_stage(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
+                                               m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [False, True, True],
+                                               [32, 32, 32], 32, pmiu, 16, reuse)
+            # fc0_pool [pn1,]
+            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+
+        with tf.name_scope('conv_stage1'):
+            # fc1 [pn1,128] lf1 [pn1,480]
+            fc1,lf1=graph_pmiu_nosum_conv_pool_stage(1,cxyzs[1],dxyzs[1],fc0_pool,cidxs[1],nidxs[1],nidxs_lens[1],nidxs_bgs[1],
+                                               m, 32, 8, [32, 32, 32, 64, 64, 64], [32, 32, 32, 64, 64, 64],
+                                               [False, False, True, True, True, True],
+                                               [128, 128, 128], 128, pmiu, 16, reuse)
+            # fc1_pool [pn2,]
+            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+
+        with tf.name_scope('conv_stage2'):
+            # fc2 [pn2,256] lf2 [pn2,648]
+            fc2,lf2=graph_pmiu_nosum_conv_pool_stage(2,cxyzs[2],cxyzs[2],fc1_pool,cidxs[2],nidxs[2],nidxs_lens[2],nidxs_bgs[2],
+                                                   m, 128, 8, [128, 128, 256], [128, 128, 256], [False, True, True],
+                                                   [256, 256], 256, pmiu, 16, reuse)
+            # [1,256]
+            fc2_pool=tf.reduce_max(fc2,axis=0)
 
 
+        with tf.name_scope('unpool_stage2'):
+            # [pn3,256]
+            upfeats2=tf.tile(tf.expand_dims(fc2_pool,axis=0),[tf.shape(fc2)[0],1])
+            # [pn3,256+256+648=1260] [fc2_pool,fc2,lf2]
+            upf2=tf.concat([upfeats2,fc2,lf2],axis=1)
+
+        with tf.name_scope('unpool_stage1'):
+            # [pn2,1260]
+            upfeats1=graph_unpool_stage(1,upf2,vlens[1],vlens_bgs[1],vcidxs[1])
+            # [pn2,1260+128+480=1868] [fc2_pool,fc2,lf2,fc1,lf1]
+            upf1=tf.concat([upfeats1,fc1,lf1],axis=1)
+
+        with tf.name_scope('unpool_stage0'):
+            # [pn1,1868+32+76=1976] [fc2_pool,fc2,lf2,fc1,lf1,fc0,lf0]
+            upfeats0=graph_unpool_stage(0,upf1,vlens[0],vlens_bgs[0],vcidxs[0])
+            upf0=tf.concat([upfeats0,fc0,lf0],axis=1)
+
+        lf=tf.concat([fc0, lf0], axis=1)
+
+        return upf0,lf
 
 
+def graph_conv_pool_v8_nosum_all(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_lens, nidxs_bgs,
+                                 m, pmiu, reuse=False):
+    with tf.name_scope('graph_conv_pool_net'):
+        with tf.name_scope('conv_stage0'):
+            # feats0=tf.concat([rgbs,covars],axis=1)
+            # fc0 [pn0,32] lf0 [pn0,76]
+            fc0,lf0=graph_pmiu_nosum_all_conv_pool_stage(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
+                                                         m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [False, False, False],
+                                                         [32, 32, 32], 32, pmiu, 16, reuse)
+            # fc0_pool [pn1,]
+            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+
+        with tf.name_scope('conv_stage1'):
+            # fc1 [pn1,128] lf1 [pn1,480]
+            fc1,lf1=graph_pmiu_nosum_all_conv_pool_stage(1,cxyzs[1],dxyzs[1],fc0_pool,cidxs[1],nidxs[1],nidxs_lens[1],nidxs_bgs[1],
+                                                         m, 32, 8, [32, 32, 32, 64, 64, 64], [32, 32, 32, 64, 64, 64],
+                                                         [False, False, False, False, False, False],
+                                                         [128, 128, 128], 128, pmiu, 16, reuse)
+            # fc1_pool [pn2,]
+            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+
+        with tf.name_scope('conv_stage2'):
+            # fc2 [pn2,256] lf2 [pn2,648]
+            fc2,lf2=graph_pmiu_nosum_all_conv_pool_stage(2,cxyzs[2],cxyzs[2],fc1_pool,cidxs[2],nidxs[2],nidxs_lens[2],nidxs_bgs[2],
+                                                         m, 128, 8, [128, 128, 256], [128, 128, 256], [False, False, False],
+                                                         [256, 256], 256, pmiu, 16, reuse)
+            # [1,256]
+            fc2_pool=tf.reduce_max(fc2,axis=0)
 
 
+        with tf.name_scope('unpool_stage2'):
+            # [pn3,256]
+            upfeats2=tf.tile(tf.expand_dims(fc2_pool,axis=0),[tf.shape(fc2)[0],1])
+            # [pn3,256+256+648=1260] [fc2_pool,fc2,lf2]
+            upf2=tf.concat([upfeats2,fc2,lf2],axis=1)
 
+        with tf.name_scope('unpool_stage1'):
+            # [pn2,1260]
+            upfeats1=graph_unpool_stage(1,upf2,vlens[1],vlens_bgs[1],vcidxs[1])
+            # [pn2,1260+128+480=1868] [fc2_pool,fc2,lf2,fc1,lf1]
+            upf1=tf.concat([upfeats1,fc1,lf1],axis=1)
+
+        with tf.name_scope('unpool_stage0'):
+            # [pn1,1868+32+76=1976] [fc2_pool,fc2,lf2,fc1,lf1,fc0,lf0]
+            upfeats0=graph_unpool_stage(0,upf1,vlens[0],vlens_bgs[0],vcidxs[0])
+            upf0=tf.concat([upfeats0,fc0,lf0],axis=1)
+
+        lf=tf.concat([fc0, lf0], axis=1)
+
+        return upf0,lf
+
+def graph_conv_pool_model_v1(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_lens, nidxs_bgs,
+                             m, pmiu, reuse=False):
+    with tf.name_scope('graph_conv_pool_net'):
+        with tf.name_scope('conv_stage0'):
+            # feats0=tf.concat([rgbs,covars],axis=1)
+            # fc0 [pn0,32] lf0 [pn0,76]
+            fc0,lf0=graph_pmiu_nosum_all_conv_pool_stage(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
+                                                           m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [False, False, False],
+                                                           [32, 32, 32], 32, pmiu, 16, reuse)
+            # fc0_pool [pn1,]
+            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+
+        with tf.name_scope('conv_stage1'):
+            # fc1 [pn1,128] lf1 [pn1,480]
+            fc1,lf1=graph_pmiu_nosum_all_conv_pool_stage(1,cxyzs[1],dxyzs[1],fc0_pool,cidxs[1],nidxs[1],nidxs_lens[1],nidxs_bgs[1],
+                                                           m, 32, 8, [32, 32, 32, 64, 64, 64], [32, 32, 32, 64, 64, 64],
+                                                           [False, False, False, False, False, False],
+                                                           [128, 128, 128], 128, pmiu, 16, reuse)
+            # fc1_pool [pn2,]
+            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+
+        with tf.name_scope('conv_stage2'):
+            # fc2 [pn2,256] lf2 [pn2,648]
+            fc2,lf2=graph_pmiu_nosum_all_conv_pool_stage(2,cxyzs[2],cxyzs[2],fc1_pool,cidxs[2],nidxs[2],nidxs_lens[2],nidxs_bgs[2],
+                                                         m, 128, 8, [128, 128, 256], [128, 128, 256], [False, False, False],
+                                                         [256, 256], 256, pmiu, 16, reuse)
+            fc2_pool=tf.reduce_max(fc2,axis=0)
+            fc1_pool=tf.reduce_max(fc1,axis=0)
+            fc0_pool=tf.reduce_max(fc0,axis=0)
+
+            lf0_pool=tf.reduce_max(lf0,axis=0)
+            lf1_pool=tf.reduce_max(lf1,axis=0)
+            lf2_pool=tf.reduce_max(lf2,axis=0)
+
+        return tf.concat([fc0_pool,fc1_pool,fc2_pool,lf0_pool,lf1_pool,lf2_pool],axis=0)
+        # return tf.concat([fc0_pool,lf0_pool],axis=0),fc0
+
+
+def model_classifier_v1(feats, is_training, num_classes, reuse=False, use_bn=False):
+    '''
+
+    :param feats: f
+    :param is_training:
+    :param num_classes:
+    :param reuse:
+    :return:
+    '''
+    normalizer_params={'scale':False,'is_training':is_training,'reuse':reuse}
+    bn=tf.contrib.layers.batch_norm if use_bn else None
+    with tf.name_scope('model_classifier'):
+        with framework.arg_scope([tf.contrib.layers.fully_connected],
+                                 activation_fn=tf.nn.relu,reuse=reuse,normalizer_fn=bn):
+
+            normalizer_params['scope']='class_fc1_bn'
+            class_fc1 = tf.contrib.layers.fully_connected(
+                feats, num_outputs=512, scope='class_fc1',normalizer_params=normalizer_params)
+            class_fc1=tf.concat([class_fc1, feats], axis=1)
+            class_fc1 = tf.cond(is_training, lambda: tf.nn.dropout(class_fc1, 0.7), lambda: class_fc1)
+
+            normalizer_params['scope']='class_fc2_bn'
+            class_fc2 = tf.contrib.layers.fully_connected(
+                class_fc1, num_outputs=256, scope='class_fc2',normalizer_params=normalizer_params)
+            class_fc2=tf.concat([class_fc2, feats], axis=1)
+            class_fc2=tf.cond(is_training,lambda:tf.nn.dropout(class_fc2,0.7),lambda:class_fc2)
+
+            logits = tf.contrib.layers.fully_connected(
+                class_fc2, num_outputs=num_classes, scope='class_fc3',activation_fn=None,normalizer_fn=None)
+
+    return logits

@@ -1,5 +1,5 @@
 import tensorflow as tf
-from model import graph_conv_pool_v3,classifier_v3
+from model import graph_conv_pool_v7_nosum_lpmiu,classifier_v3
 from train_graph_pool import neighbor_anchors_v2
 from io_util import read_room_pkl,get_semantic3d_testset,read_pkl
 from aug_util import compute_nidxs_bgs
@@ -13,7 +13,7 @@ import pyflann
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--restore_model', type=str, default='', help='')
-parser.add_argument('--num_classes', type=int, default=13, help='')
+parser.add_argument('--num_classes', type=int, default=9, help='')
 
 FLAGS = parser.parse_args()
 
@@ -75,8 +75,8 @@ def build_network(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
                    m, pmiu=None,is_training=None):
 
     rgb_covars = tf.concat([rgbs, covars], axis=1)
-    feats,lf=graph_conv_pool_v3(cxyzs, dxyzs, rgb_covars, vlens, vlens_bgs, vcidxs,
-                             cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, False)
+    feats,lf=graph_conv_pool_v7_nosum_lpmiu(cxyzs, dxyzs, rgb_covars, vlens, vlens_bgs, vcidxs,
+                                            cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, False)
     feats=tf.expand_dims(feats,axis=0)
     lf=tf.expand_dims(lf,axis=0)
     logits=classifier_v3(feats, lf, is_training, FLAGS.num_classes, False, use_bn=False)  # [1,pn,num_classes]
@@ -132,7 +132,7 @@ def eval_room_probs(fn,sess,pls,ops,feed_dict):
 
 def interpolate(sxyzs,sprobs,qxyzs,ratio=1.0/(2*0.125*0.125)):
     bg=time.time()
-    nidxs=libPointUtil.findNeighborInAnotherCPU(sxyzs,qxyzs,0.25)
+    nidxs=libPointUtil.findNeighborInAnotherCPU(sxyzs,qxyzs,6)
     print 'search done {} s'.format(time.time()-bg)
     nidxs_lens=np.asarray([len(idxs) for idxs in nidxs],dtype=np.int32)
     nidxs_bgs=compute_nidxs_bgs(nidxs_lens)

@@ -4,6 +4,7 @@ path = os.path.split(os.path.realpath(__file__))[0]
 neighbor_ops=tf.load_op_library(path+'/build/libTFNeighborOps.so')
 import sys
 sys.path.append(path)
+from generate_pmiu import generate_pmiu
 
 from tensorflow.python.framework import ops
 
@@ -50,7 +51,7 @@ def _neighbor_max_feat_gather_gradient(op,dgfeats,dmax_idxs):
 #     return [difeats,None,None,None]
 
 
-def _variable_on_cpu(name, shape, initializer, use_fp16=False):
+def _variable_on_cpu(name, shape, initializer, use_fp16=False,init_val=None):
     """Helper to create a Variable stored on CPU memory.
     Args:
       name: name of the variable
@@ -61,7 +62,11 @@ def _variable_on_cpu(name, shape, initializer, use_fp16=False):
     """
     with tf.device('/cpu:0'):
         dtype = tf.float16 if use_fp16 else tf.float32
-        var = tf.get_variable(name, shape, initializer=initializer, dtype=dtype)
+        if init_val is not None:
+            var_init=tf.Variable(init_val,False,name='{}_init_val'.format(name),dtype=dtype, expected_shape=init_val.shape)
+            var = tf.get_variable(name, initializer=var_init.initialized_value(), dtype=dtype)
+        else:
+            var = tf.get_variable(name, shape, initializer=initializer, dtype=dtype)
         # tf.add_to_collection(tf.GraphKeys.TRAINABLE_VARIABLES,var)
     return var
 
@@ -197,10 +202,12 @@ def graph_conv_xyz(xyz, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, ofn,n
     with tf.variable_scope(name,reuse=reuse):
         pw=_variable_on_cpu('pw', [ifn,m,ofn], initializer)
         if compute_lw and pmiu is None:
-                pmiu=_variable_on_cpu('pmiu', [3,m], initializer)
+            pmiu_init=generate_pmiu(m)
+            pmiu=_variable_on_cpu('pmiu', [3,m], initializer=None, init_val=pmiu_init)
 
         if use_bias:
-            bias=_variable_on_cpu('bias',[ofn],tf.zeros_initializer())
+            bdim=ofn if not no_sum else ofn*m
+            bias=_variable_on_cpu('bias',[bdim],tf.zeros_initializer())
 
     with tf.name_scope(name):
         pfeats,lw_,lw_sum_=graph_conv_xyz_impl(xyz,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,compute_lw,lw,lw_sum,pmiu,no_sum)
@@ -210,7 +217,8 @@ def graph_conv_xyz(xyz, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, ofn,n
 
         if activation_fn is not None:
             pfeats=activation_fn(pfeats)
-            pfeats=tf.reshape(pfeats,[-1,ofn])
+            odim = ofn if not no_sum else ofn * m
+            pfeats=tf.reshape(pfeats,[-1,odim])
 
         if compute_lw:
             lw=lw_
@@ -293,3 +301,13 @@ def graph_neighbor_scatter(ifeats,nidxs,nidxs_lens,nidxs_bgs):
 def graph_neighbor_sum(ifeats,nidxs_lens,nidxs_bgs,cidxs):
     return neighbor_ops.neighbor_sum_feat_gather(ifeats,cidxs,nidxs_lens,nidxs_bgs)
 
+def graph_learn_pmiu(ifeats, m, scope, nidxs, nidxs_lens, nidxs_bgs):
+    with tf.variable_scope(scope):
+        pmiu_init=generate_pmiu(m)
+        pmiu=_variable_on_cpu('pmiu', [3,m], None, init_val=pmiu_init)
+
+    with tf.name_scope(scope):
+        sfeats = neighbor_ops.neighbor_scatter(ifeats, nidxs, nidxs_lens, nidxs_bgs, use_diff=True)
+        lw = tf.exp(tf.matmul(sfeats, pmiu))                    # [csum,m]
+        lw_sum = neighbor_ops.location_weight_sum(lw, nidxs_lens, nidxs_bgs)
+    return lw,lw_sum

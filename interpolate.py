@@ -1,5 +1,5 @@
 import tensorflow as tf
-from model import graph_conv_pool_v3,classifier_v3
+from model import graph_conv_pool_v4,classifier_v3
 from train_graph_pool import neighbor_anchors_v2
 from io_util import read_fn_hierarchy,get_train_test_split,read_room_h5,get_block_train_test_split,read_room_pkl,get_class_names
 from aug_util import compute_nidxs_bgs
@@ -74,7 +74,7 @@ def build_network(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
                    m, pmiu=None,is_training=None):
 
     rgb_covars = tf.concat([rgbs, covars], axis=1)
-    feats,lf=graph_conv_pool_v3(cxyzs, dxyzs, rgb_covars, vlens, vlens_bgs, vcidxs,
+    feats,lf=graph_conv_pool_v4(cxyzs, dxyzs, rgb_covars, vlens, vlens_bgs, vcidxs,
                              cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, False)
     feats=tf.expand_dims(feats,axis=0)
     lf=tf.expand_dims(lf,axis=0)
@@ -86,6 +86,7 @@ def build_network(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
     ops={}
     ops['feats']=feats
     ops['probs']=probs
+    ops['logits']=flatten_logits
     ops['preds']=preds
     return ops
 
@@ -132,7 +133,7 @@ def eval_room_probs(fn,sess,pls,ops,feed_dict):
 
 
 def interpolate(sxyzs,sprobs,qxyzs,ratio=1.0/(2*0.075*0.075)):
-    nidxs=libPointUtil.findNeighborInAnotherGPU(sxyzs,qxyzs,6)
+    nidxs=libPointUtil.findNeighborInAnotherCPU(sxyzs,qxyzs,0.15)
     nidxs_lens=np.asarray([len(idxs) for idxs in nidxs],dtype=np.int32)
     nidxs_bgs=compute_nidxs_bgs(nidxs_lens)
     nidxs=np.concatenate(nidxs,axis=0)
@@ -163,6 +164,11 @@ if __name__=="__main__":
         # print labels.shape
         # print qpreds.shape
         fp, tp, fn=acc_val(labels.flatten(),qpreds.flatten(),fp,tp,fn)
+        # output_points('test_result/spreds.txt',sxyzs,colors[spreds,:])
+        # output_points('test_result/slabel.txt',sxyzs,colors[slbls.flatten(),:])
+        # output_points('test_result/qpreds.txt',qxyzs,colors[qpreds,:])
+        # output_points('test_result/qlabel.txt',qxyzs,colors[labels.flatten(),:])
+        # break
 
     iou, miou, oiou, acc, macc, oacc=val2iou(fp,tp,fn)
     print 'mean iou {:.5} overall iou {:5} \nmean acc {:5} overall acc {:5}'.format(miou, oiou, macc, oacc)
@@ -170,7 +176,3 @@ if __name__=="__main__":
     names = get_class_names()
     for i in xrange(len(names)):
         print '{} iou {} acc {}'.format(names[i], iou[i], acc[i])
-    # output_points('test_result/spreds.txt',sxyzs,colors[spreds,:])
-    # output_points('test_result/slabel.txt',sxyzs,colors[slbls.flatten(),:])
-    # output_points('test_result/qpreds.txt',qxyzs,colors[qpreds,:])
-    # output_points('test_result/qlabel.txt',qxyzs,colors[labels.flatten(),:])

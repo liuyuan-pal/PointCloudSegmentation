@@ -527,6 +527,35 @@ def semantic3d_test_to_block():
         print '{} done'.format(fn)
 
 
+def modelnet_dataset_to_block():
+    from io_util import read_model_h5
+    train_list=['data/ModelNet40/ply_data_train{}.h5'.format(i) for i in xrange(5)]
+    test_list=['data/ModelNet40/ply_data_test{}.h5'.format(i) for i in xrange(2)]
+    # train_list2=['data/ModelNet40/ply_data_train{}.pkl'.format(i) for i in xrange(5)]
+    # test_list2=['data/ModelNet40/ply_data_test{}.pkl'.format(i) for i in xrange(2)]
+
+    for fi,filename in enumerate(train_list[:2]):
+        points,labels=read_model_h5(filename)
+        data = normalize_model_hierarchy(points,False)
+        app_data=[]
+        app_data.append(labels)
+        app_data+=data
+        save_pkl('data/ModelNet40/ply_data_train{}.pkl'.format(fi),app_data)
+        print len(app_data)
+        print '{} done'.format(fi)
+
+    # for fi,filename in enumerate(test_list):
+    #     points,labels=read_model_h5(filename)
+    #     data = normalize_model_hierarchy(points,False)
+    #     app_data=[]
+    #     app_data.append(labels)
+    #     app_data+=data
+    #     save_pkl('data/ModelNet40/ply_data_test{}.pkl'.format(fi),app_data)
+    #     print '{} done'.format(fi)
+
+
+
+
 if __name__=="__main__":
     # semantic3d_to_block(40.0,37.5,0.03)
     # get_intensity_distribution()
@@ -534,9 +563,6 @@ if __name__=="__main__":
     # semantic3d_sample_training_block()
     # merge_train_files()
     # semantic3d_test_to_block()
-    fns,pns=get_semantic3d_testset()
-    for fn in fns:
-        points,labels=read_pkl('data/Semantic3D.Net/pkl/test/'+fn+'.pkl')
-        labels=read_semantic3d_label_file('data/Semantic3D.Net/'+fn+'.labels')
-        print points.shape,labels.shape
+    modelnet_dataset_to_block()
+
 

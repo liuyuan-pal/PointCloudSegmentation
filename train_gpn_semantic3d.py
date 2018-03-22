@@ -4,7 +4,7 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model import graph_conv_pool_v3,classifier_v3
+from model import graph_conv_pool_v7_nosum_lpmiu,classifier_v3
 from train_util import *
 from io_util import get_semantic3d_block_train_test_split,read_pkl,get_semantic3d_class_names,read_fn_hierarchy
 from provider import Provider,default_unpack_feats_labels
@@ -46,7 +46,8 @@ def tower_loss(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
 
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         rgb_covars=tf.concat([rgbs, covars],axis=1)
-        feats,lf=graph_conv_pool_v3(cxyzs, dxyzs, rgb_covars, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_lens, nidxs_bgs,m,pmiu,reuse)
+        feats,lf=graph_conv_pool_v7_nosum_lpmiu(cxyzs, dxyzs, rgb_covars, vlens, vlens_bgs, vcidxs,
+                                                cidxs, nidxs, nidxs_lens, nidxs_bgs,m,pmiu,reuse)
         feats=tf.expand_dims(feats,axis=0)
         lf=tf.expand_dims(lf,axis=0)
         logits=classifier_v3(feats, lf, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]

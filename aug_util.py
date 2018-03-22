@@ -192,8 +192,6 @@ def sample_block(points, labels, ds_stride, block_size, block_stride, min_pn,
     rgbs=rgbs[covar_ds_idxs,:][ds_idxs,:]
     lbls=labels[covar_ds_idxs][ds_idxs]
 
-    print xyzs.shape
-    print 'block begin'
     if gpu_gather:
         xyzs-=min_xyzs
         idxs=uniform_sample_block_gpu(xyzs,block_size,block_stride,min_pn=min_pn)
@@ -202,8 +200,6 @@ def sample_block(points, labels, ds_stride, block_size, block_stride, min_pn,
         xyzs-=min_xyzs
         idxs = uniform_sample_block(xyzs,block_size,block_stride,normalized=True,min_pn=min_pn)
         xyzs+=min_xyzs
-
-    print 'block end'
 
     xyzs, rgbs, covars, lbls=fetch_subset([xyzs,rgbs,covars,lbls],idxs)
 
@@ -261,7 +257,7 @@ def sample_block_v2(points, labels, ds_stride, block_size, block_stride, min_pn,
     lbls=labels[ds_idxs]
 
     xyzs-=min_xyzs
-    idxs = uniform_sample_block(xyzs,block_size,block_stride,normalized=False,min_pn=min_pn)
+    idxs = uniform_sample_block(xyzs,block_size,block_stride,normalized=True,min_pn=min_pn)
     xyzs+=min_xyzs
     xyzs, rgbs, covars, lbls=fetch_subset([xyzs,rgbs,covars,lbls],idxs)
 
@@ -469,95 +465,177 @@ def normalize_block_hierarchy(xyzs,rgbs,covars,lbls,bsize=3.0,
     return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens,block_mins
 
 
-# class IterWrapper():
-#     def __init__(self,data):
-#         self.data=data
-#         self.cur_i=0
-#         self.length=len(data[0])
-#
-#     def __iter__(self):
-#         return self
-#
-#     def next(self):
-#         if self.cur_i>=self.length:
-#             raise StopIteration
-#         xyzs, rgbs, covars, lbls = \
-#             self.data[0][self.cur_i],self.data[1][self.cur_i],self.data[2][self.cur_i],self.data[3][self.cur_i]
-#         self.cur_i+=1
-#         return xyzs, rgbs, covars, lbls
-#
-#
-# def normalize_single_hierarchy(xyzs, rgbs, covars, lbls,bsize=3.0, nr1=0.1,nr2=0.3,nr3=1.0,vc1=0.15,vc2=0.5,
-#                                resample=False,resample_low=0.8,resample_high=0.95,
-#                               jitter_color=False,jitter_val=2.5):
-#     if resample:
-#         pt_num = len(xyzs)
-#         random_down_ratio = np.random.uniform(resample_low, resample_high)
-#         idxs = np.random.choice(pt_num, int(pt_num * random_down_ratio))
-#         xyzs = xyzs[idxs, :]
-#         rgbs = rgbs[idxs, :]
-#         lbls = lbls[idxs]
-#         covars = covars[idxs, :]
-#
-#     # offset center to zero
-#     min_xyz=np.min(xyzs,axis=0,keepdims=True)
-#     min_xyz[:,:2]+=bsize/2.0
-#     xyzs-=min_xyz
-#
-#     cxyz1, dxyz1, vlens1, cxyz2, dxyz2, vlens2, cxyz3, feats_list = \
-#         build_hierarchy(xyzs, [rgbs, lbls, covars], vc1, vc2)
-#     rgbs, lbls, covars = feats_list
-#
-#     # rescale to unit cube
-#     dxyz1 /= vc1
-#     dxyz2 /= vc2
-#
-#     vlens_bgs1 = compute_nidxs_bgs(vlens1)
-#     vlens_bgs2 = compute_nidxs_bgs(vlens2)
-#     vcidxs1 = compute_cidxs(vlens1)
-#     vcidxs2 = compute_cidxs(vlens2)
-#
-#     nidxs1, nidxs_lens1, nidxs_bgs1, cidxs1 = point2ndixs(cxyz1, nr1)
-#     nidxs2, nidxs_lens2, nidxs_bgs2, cidxs2 = point2ndixs(cxyz2, nr2)
-#     nidxs3, nidxs_lens3, nidxs_bgs3, cidxs3 = point2ndixs(cxyz3, nr3)
-#
-#     if jitter_color:
-#         rgbs[:, :3] += np.random.uniform(-jitter_val, jitter_val, rgbs[:, :3].shape)
-#         rgbs[:, :3] -= 128
-#         rgbs[:, :3] /= (128 + jitter_val)
-#     else:
-#         rgbs[:, :3] -= 128
-#         rgbs[:, :3] /= 128
-#
-#     mask = lbls > 12
-#     if np.sum(mask) > 0:
-#         lbls[mask] = 12
-#     lbls = lbls.flatten()
-#
-#     return [rgbs,covars,lbls,[cxyz1,cxyz2,cxyz3],[dxyz1,dxyz2],[vlens1,vlens2],[vlens_bgs1,vlens_bgs2],[vcidxs1,vcidxs2],
-#                 [cidxs1,cidxs2,cidxs3],[nidxs1,nidxs2,nidxs3],[nidxs_bgs1,nidxs_bgs2,nidxs_bgs3],
-#                 [nidxs_lens1,nidxs_lens2,nidxs_lens3],min_xyz]
-#
-#
-# from concurrent.futures import ThreadPoolExecutor
-# executor=ThreadPoolExecutor(4)
-#
-# def normalize_hierarchy_parallel(xyzs,rgbs,covars,lbls,bsize=3.0,nr1=0.1,nr2=0.3,nr3=1.0,vc1=0.15,vc2=0.5,
-#                               resample=False,resample_low=0.8,resample_high=0.95,
-#                               jitter_color=False,jitter_val=2.5):
-#
-#     def norm_wrapper(data):
-#         xyzs, rgbs, covars, lbls = data
-#         return normalize_single_hierarchy(xyzs, rgbs, covars, lbls, bsize, nr1, nr2, nr3, vc1, vc2,
-#                                           resample,resample_low,resample_high,jitter_color,jitter_val)
-#     it=IterWrapper([xyzs,rgbs,covars,lbls])
-#     results=executor.map(norm_wrapper,it)
-#
-#     cxyzs,dxyzs,vlens,vlens_bgs,vcidxs,\
-#     cidxs,nidxs,nidxs_bgs,nidxs_lens=[],[],[],[],[],[],[],[],[]
-#     rgbs, covars, lbls=[],[],[]
-#     block_mins=[]
-#     for r in results:
-#         _append([rgbs,covars,lbls,cxyzs,dxyzs,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens,block_mins],r)
-#
-#     return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens,block_mins
+def normalize_model_hierarchy(xyzs,use_rotate=False,nr1=0.05,nr2=0.1,nr3=0.3,vc1=0.1,vc2=0.3):
+    #xyzs [b,1024,3]
+    n=xyzs.shape[0]
+    cxyzs,dxyzs,vlens,vlens_bgs,vcidxs,\
+    cidxs,nidxs,nidxs_bgs,nidxs_lens=[],[],[],[],[],[],[],[],[]
+    covars=[]
+    for i in xrange(n):
+        # bg=time.time()
+        if use_rotate:
+            ang=np.random.uniform(0,np.pi*2)
+            xyzs[i]=rotate(xyzs[i],ang)
+
+        nidxs1=libPointUtil.findNeighborRadiusCPU(xyzs[i],nr1,15)
+
+        nidxs_lens1=np.ascontiguousarray([len(idxs) for idxs in nidxs1],np.int32)
+        nidxs_bgs1=compute_nidxs_bgs(nidxs_lens1)
+        nidxs1=np.ascontiguousarray(np.concatenate(nidxs1,axis=0),dtype=np.int32)
+
+        covar=libPointUtil.computeCovarsGPU(xyzs[i],nidxs1,nidxs_lens1,nidxs_bgs1)
+
+        cxyz1, dxyz1, vlens1, cxyz2, dxyz2, vlens2, cxyz3, feats_list=\
+            build_hierarchy(xyzs[i],[covar],vc1,vc2)
+        covar=feats_list[0]
+        covars.append(covar)
+
+
+        # rescale to unit cube
+        dxyz1/=vc1
+        dxyz2/=vc2
+
+        # bg=time.time()
+        vlens_bgs1=compute_nidxs_bgs(vlens1)
+        vlens_bgs2=compute_nidxs_bgs(vlens2)
+        vcidxs1=compute_cidxs(vlens1)
+        vcidxs2=compute_cidxs(vlens2)
+
+        nidxs1,nidxs_lens1,nidxs_bgs1,cidxs1=point2ndixs(cxyz1,nr1)
+        nidxs2,nidxs_lens2,nidxs_bgs2,cidxs2=point2ndixs(cxyz2,nr2)
+        nidxs3,nidxs_lens3,nidxs_bgs3,cidxs3=point2ndixs(cxyz3,nr3)
+
+
+        _append([cxyzs, dxyzs, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens],
+                [[cxyz1,cxyz2,cxyz3],[dxyz1,dxyz2],[vlens1,vlens2],[vlens_bgs1,vlens_bgs2],[vcidxs1,vcidxs2],
+                [cidxs1,cidxs2,cidxs3],[nidxs1,nidxs2,nidxs3],[nidxs_bgs1,nidxs_bgs2,nidxs_bgs3],
+                [nidxs_lens1,nidxs_lens2,nidxs_lens3]])
+        # print '{} cost {} s'.format(i,time.time()-bg)
+
+    return cxyzs, dxyzs, covars, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens
+
+
+
+def sample_block_scannet(points, labels, ds_stride, block_size, block_stride, min_pn,
+                         use_rescale=False, use_flip=False, use_rotate=False,
+                         covar_nn_size=0.1):
+    xyzs=np.ascontiguousarray(points[:,:3])
+    min_xyzs=np.min(xyzs,axis=0,keepdims=True)
+    max_xyzs=np.max(xyzs,axis=0,keepdims=True)
+
+    # flip
+    if use_flip:
+        if random.random()<0.5:
+            xyzs=swap_xy(xyzs)
+            min_xyzs=swap_xy(min_xyzs)
+            max_xyzs=swap_xy(max_xyzs)
+
+        if random.random()<0.5:
+            xyzs=flip(xyzs,axis=0)
+            min_xyzs[:,0],max_xyzs[:,0]=-max_xyzs[:,0],-min_xyzs[:,0]
+
+        if random.random()<0.5:
+            xyzs=flip(xyzs,axis=1)
+            min_xyzs[:,1],max_xyzs[:,1]=-max_xyzs[:,1],-min_xyzs[:,1]
+
+    # rescale
+    if use_rescale:
+        rescale=np.random.uniform(0.9,1.1,[1,3])
+        xyzs[:,:3]*=rescale
+        min_xyzs*=rescale
+        max_xyzs*=rescale
+
+    # rotate
+    if use_rotate:
+        if random.random()>0.3:
+            angle=random.random()*np.pi/2.0
+            xyzs=rotate(xyzs,angle)
+
+    ds_idxs=libPointUtil.gridDownsampleGPU(xyzs,ds_stride,False)
+
+    covar_nidxs=libPointUtil.findNeighborRadiusGPU(xyzs,ds_idxs,covar_nn_size)
+
+    covar_nidxs_lens=np.ascontiguousarray([len(idxs) for idxs in covar_nidxs],np.int32)
+    covar_nidxs_bgs=compute_nidxs_bgs(covar_nidxs_lens)
+    covar_nidxs=np.ascontiguousarray(np.concatenate(covar_nidxs,axis=0),dtype=np.int32)
+
+    covars=libPointUtil.computeCovarsGPU(xyzs,covar_nidxs,covar_nidxs_lens,covar_nidxs_bgs)
+
+    xyzs=xyzs[ds_idxs,:]
+    lbls=labels[ds_idxs]
+
+    xyzs-=min_xyzs
+    idxs = uniform_sample_block(xyzs,block_size,block_stride,normalized=True,min_pn=min_pn)
+    xyzs+=min_xyzs
+    xyzs, covars, lbls=fetch_subset([xyzs,covars,lbls],idxs)
+
+    return xyzs, covars, lbls
+
+
+
+def normalize_block_scannet(xyzs,covars,lbls,bsize=3.0,
+                            nr1=0.1,nr2=0.3,nr3=1.0,vc1=0.15,vc2=0.5,
+                            resample=False,resample_low=0.8,resample_high=0.95,max_pt_num=10240):
+    bn=len(xyzs)
+    cxyzs,dxyzs,vlens,vlens_bgs,vcidxs,\
+    cidxs,nidxs,nidxs_bgs,nidxs_lens=[],[],[],[],[],[],[],[],[]
+    block_mins=[]
+
+    # t=0
+    for bid in xrange(bn):
+        if resample:
+            pt_num=len(xyzs[bid])
+            random_down_ratio=np.random.uniform(resample_low,resample_high)
+            idxs=np.random.choice(pt_num,int(pt_num*random_down_ratio))
+            xyzs[bid]=xyzs[bid][idxs,:]
+            lbls[bid]=lbls[bid][idxs]
+            covars[bid]=covars[bid][idxs,:]
+
+        if len(xyzs[bid])>max_pt_num:
+            pt_num=len(xyzs[bid])
+            ratio=max_pt_num/float(len(xyzs[bid]))
+            idxs=np.random.choice(pt_num,int(pt_num*ratio))
+            xyzs[bid]=xyzs[bid][idxs,:]
+            lbls[bid]=lbls[bid][idxs]
+            covars[bid]=covars[bid][idxs,:]
+
+        # offset center to zero
+        # !!! dont rescale here since it will affect the neighborhood size !!!
+        min_xyz=np.min(xyzs[bid],axis=0,keepdims=True)
+        min_xyz[:,:2]+=bsize/2.0
+        xyzs[bid]-=min_xyz
+        #xyzs[bid][:,:2]-=1.5    # [-1.5,1.5]
+        block_mins.append(min_xyz)
+
+        cxyz1, dxyz1, vlens1, cxyz2, dxyz2, vlens2, cxyz3, feats_list=\
+            build_hierarchy(xyzs[bid],[lbls[bid],covars[bid]],vc1,vc2)
+        lbls[bid],covars[bid]=feats_list
+
+        # rescale to unit cube
+        dxyz1/=vc1
+        dxyz2/=vc2
+
+        # bg=time.time()
+        vlens_bgs1=compute_nidxs_bgs(vlens1)
+        vlens_bgs2=compute_nidxs_bgs(vlens2)
+        vcidxs1=compute_cidxs(vlens1)
+        vcidxs2=compute_cidxs(vlens2)
+
+        nidxs1,nidxs_lens1,nidxs_bgs1,cidxs1=point2ndixs(cxyz1,nr1)
+        nidxs2,nidxs_lens2,nidxs_bgs2,cidxs2=point2ndixs(cxyz2,nr2)
+        nidxs3,nidxs_lens3,nidxs_bgs3,cidxs3=point2ndixs(cxyz3,nr3)
+        # t+=time.time()-bg
+
+        mask=lbls[bid]>12
+        if np.sum(mask)>0:
+            lbls[bid][mask]=12
+        lbls[bid]=lbls[bid].flatten()
+
+        _append([cxyzs, dxyzs, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens],
+                [[cxyz1,cxyz2,cxyz3],[dxyz1,dxyz2],[vlens1,vlens2],[vlens_bgs1,vlens_bgs2],[vcidxs1,vcidxs2],
+                [cidxs1,cidxs2,cidxs3],[nidxs1,nidxs2,nidxs3],[nidxs_bgs1,nidxs_bgs2,nidxs_bgs3],
+                [nidxs_lens1,nidxs_lens2,nidxs_lens3]])
+
+    # print 'neighbor cost {} s'.format(t)
+
+    return cxyzs,dxyzs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens,block_mins

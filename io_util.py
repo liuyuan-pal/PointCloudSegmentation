@@ -2,7 +2,7 @@ import numpy as np
 import libPointUtil
 import cPickle
 import random
-from aug_util import sample_block,normalize_block,normalize_block_hierarchy,sample_block_v2
+from aug_util import sample_block,normalize_block,normalize_block_hierarchy,sample_block_v2,normalize_model_hierarchy
 import os
 import time
 import h5py
@@ -10,6 +10,13 @@ import h5py
 def read_room_h5(room_h5_file):
     f=h5py.File(room_h5_file,'r')
     data,label = f['data'][:],f['label'][:]
+    f.close()
+
+    return data, label
+
+def read_model_h5(fn):
+    f=h5py.File(fn,'r')
+    data,label = f['point'][:],f['label'][:]
     f.close()
 
     return data, label
@@ -107,6 +114,11 @@ def get_class_names():
 def get_class_loss_weights():
     return np.asarray([1.0,1.0,1.0,100.0,1.5,1.0,1.0,1.0,1.0,10.0,1.0,2.0,1.0],np.float32)
 
+def get_scannet_class_names():
+    g_label_names = ['unannotated', 'wall', 'floor', 'chair', 'table', 'desk', 'bed', 'bookshelf', 'sofa', 'sink',
+                     'bathtub', 'toilet', 'curtain', 'counter', 'door', 'window', 'shower curtain', 'refridgerator',
+                     'picture', 'cabinet', 'otherfurniture']
+    return g_label_names
 
 def read_fn(model,filename):
     BLOCK_SIZE=3.0
@@ -181,6 +193,18 @@ def read_fn_hierarchy(model, filename,
 
     return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens,block_mins
 
+
+def read_model_hierarchy(model, filename):
+    points,labels=read_model_h5(filename)
+
+    if model=='train':
+        cxyzs, dxyzs, covars, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens= \
+            normalize_model_hierarchy(points,True)
+    else:
+        cxyzs, dxyzs, covars, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens = \
+            normalize_model_hierarchy(points,False)
+
+    return labels,cxyzs,dxyzs,covars,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens
 
 def get_semantic3d_class_names():
     return ['unknown','man-made terrain','natural terrain','high vegetation',
@@ -601,6 +625,161 @@ def test_semantic_read_pkl():
         test_provider.close()
 
 
+def test_model_hierarchy():
+    from provider import Provider,default_unpack_feats_labels
+    train_list=['data/ModelNet40/ply_data_train{}.h5'.format(i) for i in xrange(5)]
+    test_list=['data/ModelNet40/ply_data_test{}.h5'.format(i) for i in xrange(2)]
+
+    # train_provider = Provider(train_list,'train',4,read_model_hierarchy,max_cache=1)
+    test_provider = Provider(test_list[1:],'test',4,read_model_hierarchy,max_cache=1)
+
+    print len(train_list)
+    try:
+        begin = time.time()
+        i = 0
+        for data in test_provider:
+            print data[0][0]
+            i += 1
+            print 'cost {}s'.format(time.time()-begin)
+            labels, cxyzs, dxyzs, covars, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens = \
+                default_unpack_feats_labels(data, 4)
+            for k in xrange(4):
+                for t in xrange(3):
+                    print 'batch {} data {} lvl {} cxyz min {} max {} ptnum {}'.format(i,k,t,np.min(cxyzs[k][t],axis=0),
+                                                                                       np.max(cxyzs[k][t],axis=0),
+                                                                                       cxyzs[k][t].shape[0])
+                    assert cidxs[k][t].shape[0]==nidxs[k][t].shape[0]
+                    assert nidxs_bgs[k][t].shape[0]==cxyzs[k][t].shape[0]
+                    assert nidxs_lens[k][t].shape[0]==cxyzs[k][t].shape[0]
+                    assert np.sum(nidxs_lens[k][t])==nidxs[k][t].shape[0]
+                    assert nidxs_bgs[k][t][-1]+nidxs_lens[k][t][-1]==nidxs[k][t].shape[0]
+                    assert np.max(cidxs[k][t])==cxyzs[k][t].shape[0]-1
+                    print 'lvl {} avg nsize {}'.format(t,cidxs[k][t].shape[0]/float(cxyzs[k][t].shape[0]))
+
+                # print 'covars min {} max {}'.format(np.min(covars[k],axis=0),np.max(covars[k],axis=0))
+                # print np.min(covars[k],axis=0)
+                # print np.max(covars[k],axis=0)
+
+                for t in xrange(2):
+                    print 'batch {} data {} lvl {} dxyz min {} max {} ptnum {}'.format(i,k,t,np.min(dxyzs[k][t],axis=0),
+                                                                                       np.max(dxyzs[k][t],axis=0),
+                                                                                       dxyzs[k][t].shape[0])
+                    assert vlens[k][t].shape[0]==cxyzs[k][t+1].shape[0]
+                    assert vlens_bgs[k][t].shape[0]==cxyzs[k][t+1].shape[0]
+                    assert np.sum(vlens[k][t])==cxyzs[k][t].shape[0]
+                    assert vlens_bgs[k][t][-1]+vlens[k][t][-1]==cxyzs[k][t].shape[0]
+                    assert np.max(vcidxs[k][t])==cxyzs[k][t+1].shape[0]-1
+                print '////////////////////'
+
+            output_hierarchy(cxyzs[0][0],cxyzs[0][1],cxyzs[0][2],
+                             np.ones([cxyzs[0][0].shape[0],3]),
+                             np.ones([cxyzs[0][0].shape[0]],dtype=np.int32),
+                             vlens[0][0],vlens[0][1],dxyzs[0][0],dxyzs[0][1],0.2,0.5)
+
+            if i>1:
+                break
+        print 'batch_num {}'.format(i * 4)
+        print 'test set cost {} s'.format(time.time() - begin)
+        # begin = time.time()
+        # i = 0
+        # for data in train_provider:
+        #     i+=1
+        #     print data[0]
+        #     if i%2500==0:
+        #         print 'cost {} s'.format(time.time()-begin)
+        #
+        # print 'batch_num {}'.format(i * 4)
+        # print 'train set cost {} s'.format(time.time() - begin)
+
+
+    finally:
+        print 'done'
+        # train_provider.close()
+        test_provider.close()
+
+
+def test_model_read():
+    from provider import Provider,default_unpack_feats_labels
+    train_list=['data/ModelNet40/ply_data_train{}.pkl'.format(i) for i in xrange(5)]
+    test_list=['data/ModelNet40/ply_data_test{}.pkl'.format(i) for i in xrange(2)]
+    fn=lambda model,filename:read_pkl(filename)
+    train_provider = Provider(train_list,'train',4,fn,max_cache=1)
+    test_provider = Provider(test_list,'test',4,fn,max_cache=1)
+
+    try:
+        begin = time.time()
+        i = 0
+        for data in train_provider:
+            print len(data[0])
+            i += 1
+            print 'cost {}s'.format(time.time()-begin)
+            labels, cxyzs, dxyzs, covars, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens = \
+                default_unpack_feats_labels(data, 4)
+            for k in xrange(4):
+                for t in xrange(3):
+                    print 'batch {} data {} lvl {} cxyz min {} max {} ptnum {}'.format(i,k,t,np.min(cxyzs[k][t],axis=0),
+                                                                                       np.max(cxyzs[k][t],axis=0),
+                                                                                       cxyzs[k][t].shape[0])
+                    assert cidxs[k][t].shape[0]==nidxs[k][t].shape[0]
+                    assert nidxs_bgs[k][t].shape[0]==cxyzs[k][t].shape[0]
+                    assert nidxs_lens[k][t].shape[0]==cxyzs[k][t].shape[0]
+                    assert np.sum(nidxs_lens[k][t])==nidxs[k][t].shape[0]
+                    assert nidxs_bgs[k][t][-1]+nidxs_lens[k][t][-1]==nidxs[k][t].shape[0]
+                    assert np.max(cidxs[k][t])==cxyzs[k][t].shape[0]-1
+                    print 'lvl {} avg nsize {}'.format(t,cidxs[k][t].shape[0]/float(cxyzs[k][t].shape[0]))
+
+                # print 'covars min {} max {}'.format(np.min(covars[k],axis=0),np.max(covars[k],axis=0))
+                # print np.min(covars[k],axis=0)
+                # print np.max(covars[k],axis=0)
+
+                for t in xrange(2):
+                    print 'batch {} data {} lvl {} dxyz min {} max {} ptnum {}'.format(i,k,t,np.min(dxyzs[k][t],axis=0),
+                                                                                       np.max(dxyzs[k][t],axis=0),
+                                                                                       dxyzs[k][t].shape[0])
+                    assert vlens[k][t].shape[0]==cxyzs[k][t+1].shape[0]
+                    assert vlens_bgs[k][t].shape[0]==cxyzs[k][t+1].shape[0]
+                    assert np.sum(vlens[k][t])==cxyzs[k][t].shape[0]
+                    assert vlens_bgs[k][t][-1]+vlens[k][t][-1]==cxyzs[k][t].shape[0]
+                    assert np.max(vcidxs[k][t])==cxyzs[k][t+1].shape[0]-1
+                print '////////////////////'
+
+            # output_hierarchy(cxyzs[0][0],cxyzs[0][1],cxyzs[0][2],
+            #                  np.ones([cxyzs[0][0].shape[0],3]),
+            #                  np.ones([cxyzs[0][0].shape[0]],dtype=np.int32),
+            #                  vlens[0][0],vlens[0][1],dxyzs[0][0],dxyzs[0][1],0.2,0.5)
+
+        print 'batch_num {}'.format(i * 4)
+        print 'test set cost {} s'.format(time.time() - begin)
+    finally:
+        train_provider.close()
+        test_provider.close()
+
+def test_scannet():
+    from provider import Provider,default_unpack_feats_labels
+    with open('cached/scannet_train_filenames.txt','r') as f:
+        train_list=[line.strip('\n') for line in f.readlines()]
+    train_list=['/data/sampled_train/{}'.format(fn) for fn in train_list]
+    test_list=['data/ScanNet/sampled_test/test_{}.pkl'.format(i) for i in xrange(312)]
+    read_fn=lambda model,filename: read_pkl(filename)
+
+    train_provider = Provider(train_list,'test',4,read_fn)
+    test_provider = Provider(test_list,'test',4,read_fn)
+
+    try:
+        begin = time.time()
+        i = 0
+        for data in train_provider:
+            i += 1
+            if i%500==0:
+                print i
+
+        print 'batch_num {}'.format(i * 4)
+        print 'train set cost {} s'.format(time.time() - begin)
+    finally:
+        train_provider.close()
+        test_provider.close()
 
 if __name__ =="__main__":
-    test_semantic_read_pkl()
+    test_scannet()
+    # data=read_pkl('data/ModelNet40/ply_data_test1.pkl')
+    # print len(data)
