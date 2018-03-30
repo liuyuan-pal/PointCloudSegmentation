@@ -290,7 +290,7 @@ def write_train_file_list():
 def test_block():
     import os
     fss,fns=read_semantic3d_pkl_stems()
-    from io_util import get_semantic3d_class_colors
+    from draw_util import get_semantic3d_class_colors
     colors=get_semantic3d_class_colors()
     for fs in fss:
         all_points,all_labels=[],[]
@@ -307,25 +307,70 @@ def test_block():
         output_points('test_result/'+fs+'_colors.txt',all_points)
 
 
+nr1 = 0.125
+nr2 = 0.5
+nr3 = 2.0
+vc1 = 0.25
+vc2 = 1.0
+sstride = 0.125
+bsize = 10.0
+bstride = 5.0
+min_pn = 128
+resample_ratio_low = 0.8
+resample_ratio_high = 1.0
+covar_ds_stride = 0.05
+covar_nn_size = 0.1
+max_pt_num = 10240
 from io_util import read_fn_hierarchy,get_semantic3d_block_train_test_split,save_pkl
+
+def semantic3d_process_block(filename,
+                             use_rescale=False,
+                             use_rotate=False,
+                             use_flip=False,
+                             use_resample=False,
+                             jitter_color=False,
+                             nr1=0.1,nr2=0.4,nr3=1.0,
+                             vc1=0.2,vc2=0.5,
+                             sstride=0.075,
+                             bsize=3.0,
+                             bstride=1.5,
+                             min_pn=1024,
+                             resample_ratio_low=0.8,
+                             resample_ratio_high=1.0,
+                             covar_ds_stride=0.03,
+                             covar_nn_size=0.1,
+                             max_pt_num=10240):
+
+    points,labels=read_room_pkl(filename) # [n,6],[n,1]
+    xyzs, rgbs, covars, lbls=sample_block(points,labels,sstride,bsize,bstride,min_pn=min_pn,
+                                          use_rescale=use_rescale,use_flip=use_flip,use_rotate=use_rotate,
+                                          covar_ds_stride=covar_ds_stride,covar_nn_size=covar_nn_size,gpu_gather=True)
+
+    cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = \
+        normalize_block_hierarchy(xyzs,rgbs,covars,lbls,bsize=bsize,nr1=nr1,nr2=nr2,nr3=nr3,vc1=vc1,vc2=vc2,
+                                  resample=use_resample,jitter_color=jitter_color,
+                                  resample_low=resample_ratio_low,resample_high=resample_ratio_high,
+                                  max_pt_num=max_pt_num)
+
+    return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens,block_mins
+
 
 def semantic3d_sample_single_file_training_block(tfs):
     fs='data/Semantic3D.Net/block/train/'+tfs
     out_data=[[] for _ in xrange(13)]
     for i in xrange(5):
-        data=read_fn_hierarchy('train', fs,
-                               False,False,
-                               nr1=0.125, nr2=0.5, nr3=2.0,
-                               vc1=0.25, vc2=1.0,
-                               sstride=0.125,
-                               bsize=10.0,
-                               bstride=5.0,
-                               min_pn=256,
-                               resample_ratio_low=0.8,
-                               resample_ratio_high=1.0,
-                               covar_ds_stride=0.05,
-                               covar_nn_size=0.1,
-                               max_pt_num=10240)
+        data=semantic3d_process_block(fs,True,False,True,True,True,
+                                      nr1=nr1, nr2=nr2, nr3=nr3,
+                                      vc1=vc1, vc2=vc2,
+                                      sstride=sstride,
+                                      bsize=bsize,
+                                      bstride=bstride,
+                                      min_pn=min_pn,
+                                      resample_ratio_low=resample_ratio_low,
+                                      resample_ratio_high=resample_ratio_high,
+                                      covar_ds_stride=covar_ds_stride,
+                                      covar_nn_size=covar_nn_size,
+                                      max_pt_num=max_pt_num)
 
         for t in xrange(13):
             out_data[t]+=data[t]
@@ -334,32 +379,33 @@ def semantic3d_sample_single_file_training_block(tfs):
     print '{} done'.format(tfs)
 
 
+
 def semantic3d_sample_training_block():
     executor=ProcessPoolExecutor(8)
     train_list,test_list=get_semantic3d_block_train_test_split()
-    futures=[executor.submit(semantic3d_sample_single_file_training_block,tfs) for tfs in train_list]
+    futures=[executor.submit(semantic3d_sample_single_file_training_block,tfs) for tfs in test_list]
     for f in futures: f.result()
 
-    print 'testing set generating ...'
-    for tfs in test_list:
-        fs='data/Semantic3D.Net/block/train/'+tfs
-
-        out_data=read_fn_hierarchy('test', fs,
-                                   False,False,
-                                   nr1=0.125, nr2=0.5, nr3=2.0,
-                                   vc1=0.25, vc2=1.0,
-                                   sstride=0.125,
-                                   bsize=10.0,
-                                   bstride=5.0,
-                                   min_pn=256,
-                                   resample_ratio_low=0.8,
-                                   resample_ratio_high=1.0,
-                                   covar_ds_stride=0.05,
-                                   covar_nn_size=0.1,
-                                   max_pt_num=10240)
-
-        save_pkl('data/Semantic3D.Net/block/sampled/test/'+tfs,out_data)
-        print '{} done'.format(tfs)
+    # print 'testing set generating ...'
+    # for tfs in test_list:
+    #     fs='data/Semantic3D.Net/block/train/'+tfs
+    #
+    #     data=semantic3d_process_block(fs,False,False,False,False,False,
+    #                                   nr1=nr1, nr2=nr2, nr3=nr3,
+    #                                   vc1=vc1, vc2=vc2,
+    #                                   sstride=sstride,
+    #                                   bsize=bsize,
+    #                                   bstride=bstride,
+    #                                   min_pn=min_pn,
+    #                                   resample_ratio_low=resample_ratio_low,
+    #                                   resample_ratio_high=resample_ratio_high,
+    #                                   covar_ds_stride=covar_ds_stride,
+    #                                   covar_nn_size=covar_nn_size,
+    #                                   max_pt_num=max_pt_num)
+    #
+    #
+    #     save_pkl('data/Semantic3D.Net/block/sampled/test/'+tfs,data)
+    #     print '{} done'.format(tfs)
 
 
 from io_util import read_pkl
@@ -487,20 +533,6 @@ def semantic3d_test_to_block():
         fns=[fn.strip('\n').split(' ')[0] for fn in lines]
         pns=[int(fn.strip('\n').split(' ')[1]) for fn in lines]
 
-    nr1 = 0.125
-    nr2 = 0.5
-    nr3 = 2.0
-    vc1 = 0.25
-    vc2 = 1.0
-    sstride = 0.125
-    bsize = 10.0
-    bstride = 5.0
-    min_pn = 128
-    resample_ratio_low = 0.8
-    resample_ratio_high = 1.0
-    covar_ds_stride = 0.05
-    covar_nn_size = 0.1
-    max_pt_num = 10240
 
     for fn,pn in zip(fns,pns):
         all_data=[[] for _ in xrange(13)]

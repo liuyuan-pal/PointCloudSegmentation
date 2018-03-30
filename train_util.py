@@ -33,7 +33,7 @@ def compute_iou(label,pred,num_classes=13):
 
 
 
-def acc_val(label,pred,fp,tp,fn):
+def acc_val(label,pred,fp,tp,fn,num_classes=13):
     # fp = np.zeros(13, dtype=np.int)
     # tp = np.zeros(13, dtype=np.int)
     # fn = np.zeros(13, dtype=np.int)
@@ -46,7 +46,7 @@ def acc_val(label,pred,fp,tp,fn):
 
     correct_mask=(label==pred)
     incorrect_mask=(label!=pred)
-    for i in range(13):
+    for i in range(num_classes):
         label_mask=label==i
         pred_mask=pred==i
 

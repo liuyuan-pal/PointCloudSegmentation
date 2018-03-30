@@ -449,7 +449,6 @@ def normalize_block_hierarchy(xyzs,rgbs,covars,lbls,bsize=3.0,
             rgbs[bid][:,3]-=-1164.05
             rgbs[bid][:,3]/=600.0
 
-
         mask=lbls[bid]>12
         if np.sum(mask)>0:
             lbls[bid][mask]=12
@@ -550,6 +549,8 @@ def sample_block_scannet(points, labels, ds_stride, block_size, block_stride, mi
         if random.random()>0.3:
             angle=random.random()*np.pi/2.0
             xyzs=rotate(xyzs,angle)
+            min_xyzs=np.min(xyzs,axis=0,keepdims=True)
+            max_xyzs=np.max(xyzs,axis=0,keepdims=True)
 
     ds_idxs=libPointUtil.gridDownsampleGPU(xyzs,ds_stride,False)
 
@@ -625,11 +626,6 @@ def normalize_block_scannet(xyzs,covars,lbls,bsize=3.0,
         nidxs2,nidxs_lens2,nidxs_bgs2,cidxs2=point2ndixs(cxyz2,nr2)
         nidxs3,nidxs_lens3,nidxs_bgs3,cidxs3=point2ndixs(cxyz3,nr3)
         # t+=time.time()-bg
-
-        mask=lbls[bid]>12
-        if np.sum(mask)>0:
-            lbls[bid][mask]=12
-        lbls[bid]=lbls[bid].flatten()
 
         _append([cxyzs, dxyzs, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens],
                 [[cxyz1,cxyz2,cxyz3],[dxyz1,dxyz2],[vlens1,vlens2],[vlens_bgs1,vlens_bgs2],[vcidxs1,vcidxs2],

@@ -1,18 +1,19 @@
 import tensorflow as tf
-from model import graph_conv_pool_edge_shallow,classifier_v3
+from model import graph_conv_pool_new_v2,classifier_v3
 from train_graph_pool import neighbor_anchors_v2
-from io_util import read_pkl,get_block_train_test_split,read_room_pkl,get_class_names
+from io_util import read_room_pkl,get_semantic3d_testset,read_pkl,get_scannet_class_names
 from aug_util import compute_nidxs_bgs
-from draw_util import output_points,get_class_colors
-from train_util import val2iou,acc_val
+from draw_util import output_points,get_semantic3d_class_colors
+from train_util import acc_val,val2iou
 import numpy as np
 import argparse
 import libPointUtil
+import time
 
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--restore_model', type=str, default='', help='')
-parser.add_argument('--num_classes', type=int, default=13, help='')
+parser.add_argument('--num_classes', type=int, default=21, help='')
 
 FLAGS = parser.parse_args()
 
@@ -21,7 +22,6 @@ def build_placeholder():
 
     cxyzs = [tf.placeholder(tf.float32, [None, 3], 'cxyz{}'.format(j)) for j in xrange(3)]
     pls['cxyzs']=(cxyzs)
-    pls['rgbs']=(tf.placeholder(tf.float32, [None, 3], 'rgb'))
     pls['covars']=(tf.placeholder(tf.float32, [None, 9], 'covar'))
     pls['lbls']=(tf.placeholder(tf.int64, [None], 'lbl'))
 
@@ -49,7 +49,7 @@ def build_placeholder():
     return pls
 
 def fill_feed_dict(feed_in,feed_dict,pls,idx):
-    cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = feed_in
+    cxyzs, dxyzs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = feed_in
     for t in xrange(3):
         feed_dict[pls['cxyzs'][t]] = cxyzs[idx][t]
         feed_dict[pls['nidxs'][t]] = nidxs[idx][t]
@@ -57,7 +57,6 @@ def fill_feed_dict(feed_in,feed_dict,pls,idx):
         feed_dict[pls['nidxs_bgs'][t]] = nidxs_bgs[idx][t]
         feed_dict[pls['cidxs'][t]] = cidxs[idx][t]
 
-    feed_dict[pls['rgbs']] = rgbs[idx]
     feed_dict[pls['covars']] = covars[idx]
     feed_dict[pls['lbls']] = lbls[idx]
 
@@ -69,13 +68,12 @@ def fill_feed_dict(feed_in,feed_dict,pls,idx):
 
     return cxyzs[idx][0],lbls[idx],block_mins[idx]
 
-def build_network(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
+def build_network(cxyzs, dxyzs, covars, vlens, vlens_bgs, vcidxs,
                    cidxs, nidxs, nidxs_lens, nidxs_bgs,
                    m, pmiu=None,is_training=None):
 
-    rgb_covars = tf.concat([rgbs, covars], axis=1)
-    feats,lf=graph_conv_pool_edge_shallow(cxyzs, dxyzs, rgb_covars, vlens, vlens_bgs, vcidxs,
-                                   cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, False)
+    feats,lf=graph_conv_pool_new_v2(cxyzs, dxyzs, covars, vlens, vlens_bgs, vcidxs,
+                                    cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, False)
     feats=tf.expand_dims(feats,axis=0)
     lf=tf.expand_dims(lf,axis=0)
     logits=classifier_v3(feats, lf, is_training, FLAGS.num_classes, False, use_bn=False)  # [1,pn,num_classes]
@@ -86,14 +84,13 @@ def build_network(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
     ops={}
     ops['feats']=feats
     ops['probs']=probs
-    ops['logits']=flatten_logits
     ops['preds']=preds
     return ops
 
 def build_session():
     pls=build_placeholder()
     pmiu=neighbor_anchors_v2()
-    ops=build_network(pls['cxyzs'],pls['dxyzs'],pls['rgbs'],pls['covars'],
+    ops=build_network(pls['cxyzs'],pls['dxyzs'],pls['covars'],
                       pls['vlens'],pls['vlens_bgs'],pls['vcidxs'],
                       pls['cidxs'],pls['nidxs'],pls['nidxs_lens'],pls['nidxs_bgs'],
                       pmiu.shape[1],pls['pmiu'],pls['is_training'])
@@ -117,14 +114,12 @@ def _fetch_all_feed_in_idx(all_feed_in,idx):
         feed_in.append([afi[idx]])
     return feed_in
 
-colors=get_class_colors()
-def eval_room_probs(fn,sess,pls,ops,feed_dict):
-    all_feed_in=read_pkl('data/S3DIS/sampled_test/'+fn)
-    all_xyzs,all_lbls,all_probs=[],[],[]
+def eval_room_probs(idx,sess,pls,ops,feed_dict):
+    all_xyzs, all_lbls, all_probs = [], [], []
+    all_feed_in=read_pkl('data/ScanNet/sampled_test/test_{}.pkl'.format(idx))
     for i in xrange(len(all_feed_in[0])):
         sxyzs,lbls,block_mins=fill_feed_dict(all_feed_in,feed_dict,pls,i)
         probs=sess.run(ops['probs'],feed_dict)
-
         all_xyzs.append(sxyzs+block_mins)
         all_lbls.append(lbls)
         all_probs.append(probs)
@@ -142,17 +137,21 @@ def interpolate(sxyzs,sprobs,qxyzs,ratio=1.0/(2*0.075*0.075)):
     return qprobs
 
 if __name__=="__main__":
-    train_list,test_list=get_block_train_test_split()
+    from io_util import read_pkl
+    pts,lbls=read_pkl('data/ScanNet/scannet_test.pkl')
+
     sess, pls, ops, feed_dict=build_session()
     all_preds,all_labels=[],[]
-    fp = np.zeros(13, dtype=np.uint64)
-    tp = np.zeros(13, dtype=np.uint64)
-    fn = np.zeros(13, dtype=np.uint64)
-    for fs in test_list:
-        sxyzs,slbls,sprobs=eval_room_probs(fs,sess,pls,ops,feed_dict)
-        filename='data/S3DIS/room_block_10_10/'+fs
-        points,labels=read_pkl(filename)
+    fp = np.zeros(20, dtype=np.uint64)
+    tp = np.zeros(20, dtype=np.uint64)
+    fn = np.zeros(20, dtype=np.uint64)
+    for i in xrange(312):
+        begin=time.time()
+        sxyzs,slbls,sprobs=eval_room_probs(i,sess,pls,ops,feed_dict)
+        points,labels=pts[i],lbls[i]
+
         qxyzs=np.ascontiguousarray(points[:,:3],np.float32)
+
         qn=qxyzs.shape[0]
         rn=1000000
         qrn=qn/rn
@@ -166,25 +165,28 @@ if __name__=="__main__":
             qprobs.append(qrprobs)
 
         qprobs=np.concatenate(qprobs,axis=0)
-        qpreds=np.argmax(qprobs,axis=1)
+        qpreds=np.argmax(qprobs[:,1:],axis=1)+1
 
-        # print np.min(sxyzs,axis=0)
-        # print np.min(qxyzs,axis=0)
+        spreds=np.argmax(sprobs[:,1:],axis=1)+1
 
-        colors=get_class_colors()
-        spreds=np.argmax(sprobs,axis=1)
-        # print labels.shape
-        # print qpreds.shape
-        fp, tp, fn=acc_val(labels.flatten(),qpreds.flatten(),fp,tp,fn)
-        # output_points('test_result/spreds.txt',sxyzs,colors[spreds,:])
-        # output_points('test_result/slabel.txt',sxyzs,colors[slbls.flatten(),:])
-        # output_points('test_result/qpreds.txt',qxyzs,colors[qpreds,:])
-        # output_points('test_result/qlabel.txt',qxyzs,colors[labels.flatten(),:])
-        # break
+        labels=labels.flatten()
+        qpreds=qpreds.flatten()
+        mask=labels!=0
+        qpreds=qpreds[mask]
+        labels=labels[mask]
+
+        fp, tp, fn=acc_val(labels-1,qpreds-1,fp,tp,fn,20)
+
+        print 'total cost {} s'.format(time.time() - begin)
 
     iou, miou, oiou, acc, macc, oacc=val2iou(fp,tp,fn)
     print 'mean iou {:.5} overall iou {:5} \nmean acc {:5} overall acc {:5}'.format(miou, oiou, macc, oacc)
 
-    names = get_class_names()
+    names = get_scannet_class_names()[1:]
     for i in xrange(len(names)):
         print '{} iou {} acc {}'.format(names[i], iou[i], acc[i])
+
+
+
+
+

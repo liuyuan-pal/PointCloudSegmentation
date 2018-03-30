@@ -5,6 +5,17 @@ from aug_util import sample_block_scannet,normalize_block_scannet
 from io_util import save_pkl,read_pkl
 import time
 
+ds_stride=0.05
+block_size=3.0
+block_stride=1.5
+min_pn=128
+covar_nn_size=0.1
+nr1,nr2,nr3=0.1,0.3,1.0
+vc1,vc2=0.15,0.5
+rs_low,rs_high=0.8,1.0
+pn_limits=10240
+
+
 def overview():
     with open('/home/pal/data/ScanNet/data/scannet_test.pickle','rb') as f:
         points=cPickle.load(f)
@@ -54,7 +65,7 @@ def test_train_block():
             )
 
 def process_one_file(fid):
-    points,labels=read_pkl('data/ScanNet/train_split_{}.pkl'.format(fid))
+    points,labels=read_pkl('data/ScanNet/split/train_split_{}.pkl'.format(fid))
 
     room_num=len(points)
     all_data=[[] for _ in xrange(12)]
@@ -65,20 +76,21 @@ def process_one_file(fid):
             print 'idx {} cost {} s'.format(i,time.time()-bg)
             bg=time.time()
 
-        for t in xrange(10):
-            xyzs, covars, lbls=sample_block_scannet(points[i],labels[i],0.02,3.0,1.5,128,True,True,True,0.1)
-            data = normalize_block_scannet(xyzs,covars,lbls,3.0,0.1,0.3,1.0,0.15,0.5,True,0.8,1.0,10240)
+        for t in xrange(5):
+            xyzs, covars, lbls=sample_block_scannet(points[i],labels[i],ds_stride,block_size,block_stride,min_pn,
+                                                    True,True,True,covar_nn_size)
+            data = normalize_block_scannet(xyzs,covars,lbls,block_size,nr1,nr2,nr3,vc1,vc2,True,rs_low,rs_high,pn_limits)
 
             for s in xrange(len(data)):
                 all_data[s]+=data[s]
 
         if len(all_data[0])>300:
-            save_pkl('data/ScanNet/train_{}_{}.pkl'.format(fid,idx),all_data)
+            save_pkl('data/ScanNet/sampled_train/train_{}_{}.pkl'.format(fid,idx),all_data)
             idx+=1
             all_data=[[] for _ in xrange(12)]
 
     if len(all_data[0])>0:
-        save_pkl('data/ScanNet/train_{}_{}.pkl'.format(fid,idx),all_data)
+        save_pkl('data/ScanNet/sampled_train/train_{}_{}.pkl'.format(fid,idx),all_data)
         idx+=1
 
 
@@ -118,13 +130,35 @@ def process_test_data():
             print 'idx {} cost {} s'.format(i,time.time()-bg)
             bg=time.time()
 
-        xyzs, covars, lbls=sample_block_scannet(points[i],labels[i],0.02,3.0,1.5,64,False,False,False,0.1)
-        data = normalize_block_scannet(xyzs,covars,lbls,3.0,0.1,0.3,1.0,0.15,0.5,False,0.8,1.0,10240)
+        xyzs, covars, lbls=sample_block_scannet(points[i],labels[i],ds_stride,block_size,block_stride,min_pn,
+                                                False,False,False,covar_nn_size)
+        data = normalize_block_scannet(xyzs,covars,lbls,block_size,nr1,nr2,nr3,vc1,vc2,False,rs_low,rs_high,pn_limits)
 
         save_pkl('data/ScanNet/sampled_test/test_{}.pkl'.format(i),data)
 
 if __name__=="__main__":
-    import os
-    with open('cached/scannet_train_filenames.txt','w') as f:
-        for fn in os.listdir('data/ScanNet/sampled_train'):
-            f.write('{}\n'.format(fn))
+    # import os
+    # with open('cached/scannet_train_filenames.txt','w') as f:
+    #     for fn in os.listdir('data/ScanNet/sampled_train'):
+    #         f.write('{}\n'.format(fn))
+
+
+    import cPickle
+    with open('data/ScanNet/scannet_test.pickle','rb') as f:
+        pts=cPickle.load(f)
+        lbls=cPickle.load(f)
+
+    save_pkl('data/ScanNet/scannet_test.pkl',[pts,lbls])
+
+    # process_test_data()
+    # process_test_data()
+    # classes_count=np.zeros(21)
+    # for i in xrange(6):
+    #     points,labels=read_pkl('data/ScanNet/split/train_split_{}.pkl'.format(i))
+    #     for t in xrange(len(labels)):
+    #         cur_count,_=np.histogram(labels[t],np.arange(22))
+    #         classes_count+=cur_count
+    # from io_util import get_scannet_class_names
+    # names=get_scannet_class_names()
+    # for name,count in zip(names,classes_count):
+    #     print '{}: {}'.format(name,count)

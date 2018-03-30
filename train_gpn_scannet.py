@@ -4,11 +4,11 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model import graph_conv_pool_v8_nosum_all,classifier_v3
+from model import graph_conv_pool_new_v2,classifier_v3
 from train_util import *
-from io_util import read_pkl,get_scannet_class_names,
+from io_util import read_pkl,get_scannet_class_names
 from provider import Provider,default_unpack_feats_labels
-from draw_util import output_points,get_semantic3d_class_colors
+from draw_util import output_points,get_scannet_class_colors
 from functools import partial
 
 parser = argparse.ArgumentParser()
@@ -25,10 +25,10 @@ parser.add_argument('--restore',type=bool, default=False, help='')
 parser.add_argument('--restore_epoch', type=int, default=0, help='')
 parser.add_argument('--restore_model', type=str, default='', help='')
 
-parser.add_argument('--log_step', type=int, default=120, help='')
-parser.add_argument('--train_dir', type=str, default='train/s3dis_graph', help='')
-parser.add_argument('--save_dir', type=str, default='model/s3dis_graph', help='')
-parser.add_argument('--log_file', type=str, default='s3dis_graph.log', help='')
+parser.add_argument('--log_step', type=int, default=240, help='')
+parser.add_argument('--train_dir', type=str, default='train/gpn_scannet', help='')
+parser.add_argument('--save_dir', type=str, default='model/gpn_scannet', help='')
+parser.add_argument('--log_file', type=str, default='gpn_scannet.log', help='')
 
 
 parser.add_argument('--eval',type=bool, default=False, help='')
@@ -69,8 +69,8 @@ def tower_loss(cxyzs, dxyzs, covars, vlens, vlens_bgs, vcidxs,
                labels, weights, m, is_training, reuse=False,pmiu=None):
 
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
-        feats,lf=graph_conv_pool_v8_nosum_all(cxyzs, dxyzs, covars, vlens, vlens_bgs, vcidxs,
-                                              cidxs, nidxs, nidxs_lens, nidxs_bgs,m,pmiu,reuse)
+        feats,lf=graph_conv_pool_new_v2(cxyzs, dxyzs, covars, vlens, vlens_bgs, vcidxs,
+                                        cidxs, nidxs, nidxs_lens, nidxs_bgs,m,pmiu,reuse)
         feats=tf.expand_dims(feats,axis=0)
         lf=tf.expand_dims(lf,axis=0)
         logits=classifier_v3(feats, lf, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
@@ -203,8 +203,8 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
             total_losses=[]
 
         # the generated training set is too large
-        # so every 12000 examples we test once and save the model
-        if i>3000:
+        # so every 10000 examples we test once and save the model
+        if i>5000:
             break
 
     log_str('epoch {} cost {} s'.format(epoch_num, time.time()-epoch_begin), FLAGS.log_file)
@@ -214,7 +214,7 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer
     begin_time=time.time()
     test_loss=[]
     all_preds,all_labels=[],[]
-    colors=get_semantic3d_class_colors()
+    colors=get_scannet_class_colors()
     for i,feed_in in enumerate(testset):
         _,batch_labels,block_mins=fill_feed_dict(feed_in,feed_dict,pls,FLAGS.num_gpus)
 
@@ -278,6 +278,7 @@ def build_placeholder(num_gpus):
     pls['cxyzs'], pls['lbls'], pls['rgbs'], pls['covars'], pls['nidxs'], \
     pls['nidxs_lens'], pls['nidxs_bgs'], pls['cidxs'] = [], [], [], [], [], [], [], []
     pls['vlens'], pls['vlens_bgs'], pls['vcidxs'], pls['dxyzs'] = [], [], [], []
+    pls['weights'] = []
     for i in xrange(num_gpus):
         cxyzs = [tf.placeholder(tf.float32, [None, 3], 'cxyz{}_{}'.format(j, i)) for j in xrange(3)]
         pls['cxyzs'].append(cxyzs)
@@ -322,7 +323,7 @@ def train():
         pls=build_placeholder(FLAGS.num_gpus)
         pmiu=neighbor_anchors_v2()
 
-        batch_num_per_epoch=5000/FLAGS.num_gpus
+        batch_num_per_epoch=11000/FLAGS.num_gpus
         ops=train_ops(pls['cxyzs'],pls['dxyzs'],pls['covars'],
                       pls['vlens'],pls['vlens_bgs'],pls['vcidxs'],
                       pls['cidxs'],pls['nidxs'],pls['nidxs_lens'],pls['nidxs_bgs'],
@@ -363,11 +364,11 @@ def eval():
         pls=build_placeholder(FLAGS.num_gpus)
         pmiu=neighbor_anchors_v2()
 
-        batch_num_per_epoch=2000/FLAGS.num_gpus
-        ops=train_ops(pls['cxyzs'],pls['dxyzs'],pls['rgbs'],pls['covars'],
+        batch_num_per_epoch=11000/FLAGS.num_gpus
+        ops=train_ops(pls['cxyzs'],pls['dxyzs'],pls['covars'],
                       pls['vlens'],pls['vlens_bgs'],pls['vcidxs'],
                       pls['cidxs'],pls['nidxs'],pls['nidxs_lens'],pls['nidxs_bgs'],
-                      pls['lbls'],pmiu.shape[1],pls['is_training'],
+                      pls['lbls'],pls['weights'],pmiu.shape[1],pls['is_training'],
                       batch_num_per_epoch,pls['pmiu'])
 
         feed_dict={}

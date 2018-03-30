@@ -218,8 +218,7 @@ def get_semantic3d_block_train_test_split():
         for line in f.readlines():
             line=line.strip('\n')
             if line.startswith(test_stems[0]) or line.startswith(test_stems[1]):
-                if line.endswith('0.pkl'):
-                    test_list.append(line)
+                test_list.append(line)
             else:
                 train_list.append(line)
 
@@ -366,10 +365,10 @@ def test_time():
     print 'normalize cost {} s '.format(time.time()-t)
 
 
-def output_hierarchy(cxyz1,cxyz2,cxyz3,rgbs,lbls,vlens1,vlens2,dxyz1,dxyz2,vc1,vc2,idx=0):
-    from draw_util import get_class_colors,output_points
+from draw_util import get_class_colors,output_points
+s3dis_colors=get_class_colors()
+def output_hierarchy(cxyz1,cxyz2,cxyz3,rgbs,lbls,vlens1,vlens2,dxyz1,dxyz2,vc1,vc2,idx=0,colors=s3dis_colors):
     output_points('test_result/cxyz1_rgb_{}.txt'.format(idx),cxyz1,rgbs)
-    colors=get_class_colors()
     output_points('test_result/cxyz1_lbl_{}.txt'.format(idx),cxyz1,colors[lbls.flatten(),:])
 
     # test cxyz
@@ -468,7 +467,8 @@ def test_data_iter_hierarchy():
                     assert np.max(vcidxs[k][t])==cxyzs[k][t+1].shape[0]-1
                 print '////////////////////'
 
-            output_hierarchy(cxyzs[0][0],cxyzs[0][1],cxyzs[0][2],rgbs[0]*127+128,lbls[0],vlens[0][0],vlens[0][1],dxyzs[0][0],dxyzs[0][1],0.2,0.5)
+            output_hierarchy(cxyzs[0][0],cxyzs[0][1],cxyzs[0][2],rgbs[0]*127+128,lbls[0],vlens[0][0],vlens[0][1],dxyzs[0][0],
+                             dxyzs[0][1],0.2,0.5)
 
             if i>1:
                 break
@@ -758,20 +758,64 @@ def test_scannet():
     from provider import Provider,default_unpack_feats_labels
     with open('cached/scannet_train_filenames.txt','r') as f:
         train_list=[line.strip('\n') for line in f.readlines()]
-    train_list=['/data/sampled_train/{}'.format(fn) for fn in train_list]
+    train_list=['data/ScanNet/sampled_train/{}'.format(fn) for fn in train_list]
     test_list=['data/ScanNet/sampled_test/test_{}.pkl'.format(i) for i in xrange(312)]
     read_fn=lambda model,filename: read_pkl(filename)
 
-    train_provider = Provider(train_list,'test',4,read_fn)
+    train_provider = Provider(train_list,'train',4,read_fn)
     test_provider = Provider(test_list,'test',4,read_fn)
 
     try:
         begin = time.time()
         i = 0
+        class_count=np.zeros(21)
         for data in train_provider:
             i += 1
+            cxyzs, dxyzs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = \
+                default_unpack_feats_labels(data, 4)
+            for t in xrange(4):
+                cur_count,_=np.histogram(lbls[t],np.arange(22))
+                class_count+=cur_count
             if i%500==0:
                 print i
+            # for k in xrange(4):
+            #     for t in xrange(3):
+            #         print 'batch {} data {} lvl {} cxyz min {} max {} ptnum {}'.format(i,k,t,np.min(cxyzs[k][t],axis=0),
+            #                                                                            np.max(cxyzs[k][t],axis=0),
+            #                                                                            cxyzs[k][t].shape[0])
+            #         assert cidxs[k][t].shape[0]==nidxs[k][t].shape[0]
+            #         assert nidxs_bgs[k][t].shape[0]==cxyzs[k][t].shape[0]
+            #         assert nidxs_lens[k][t].shape[0]==cxyzs[k][t].shape[0]
+            #         assert np.sum(nidxs_lens[k][t])==nidxs[k][t].shape[0]
+            #         assert nidxs_bgs[k][t][-1]+nidxs_lens[k][t][-1]==nidxs[k][t].shape[0]
+            #         assert np.max(cidxs[k][t])==cxyzs[k][t].shape[0]-1
+            #         print 'lvl {} avg nsize {}'.format(t,cidxs[k][t].shape[0]/float(cxyzs[k][t].shape[0]))
+            #
+            #     # print 'covars min {} max {}'.format(np.min(covars[k],axis=0),np.max(covars[k],axis=0))
+            #     # print np.min(covars[k],axis=0)
+            #     # print np.max(covars[k],axis=0)
+            #
+            #     for t in xrange(2):
+            #         print 'batch {} data {} lvl {} dxyz min {} max {} ptnum {}'.format(i,k,t,np.min(dxyzs[k][t],axis=0),
+            #                                                                            np.max(dxyzs[k][t],axis=0),
+            #                                                                            dxyzs[k][t].shape[0])
+            #         assert vlens[k][t].shape[0]==cxyzs[k][t+1].shape[0]
+            #         assert vlens_bgs[k][t].shape[0]==cxyzs[k][t+1].shape[0]
+            #         assert np.sum(vlens[k][t])==cxyzs[k][t].shape[0]
+            #         assert vlens_bgs[k][t][-1]+vlens[k][t][-1]==cxyzs[k][t].shape[0]
+            #         assert np.max(vcidxs[k][t])==cxyzs[k][t+1].shape[0]-1
+            #     print '////////////////////'
+            #
+            # colors=np.random.randint(0,256,[21,3])
+            # print lbls[0].shape,colors[lbls[0],:].shape,cxyzs[0][0].shape
+            # output_hierarchy(cxyzs[0][0],cxyzs[0][1],cxyzs[0][2],
+            #                  np.ones([cxyzs[0][0].shape[0],3]),lbls[0],
+            #                  vlens[0][0],vlens[0][1],dxyzs[0][0],dxyzs[0][1],0.15,0.5,colors=colors)
+            # break
+
+        class_names=get_scannet_class_names()
+        for count,name in zip(class_count,class_names):
+            print '{}:\t\t{}'.format(name,count)
 
         print 'batch_num {}'.format(i * 4)
         print 'train set cost {} s'.format(time.time() - begin)
@@ -779,7 +823,40 @@ def test_scannet():
         train_provider.close()
         test_provider.close()
 
+
+def test_read_s3dis_dataset():
+    from provider import Provider,default_unpack_feats_labels
+    train_list,test_list=get_block_train_test_split()
+    train_list=['data/S3DIS/sampled_train/'+fn for fn in train_list]
+    test_list=['data/S3DIS/sampled_test/'+fn for fn in test_list]
+    for fs in train_list:
+        data=read_pkl(fs)
+        print len(data[0][0][2])
+
+    fn=lambda model,filename: read_pkl(filename)
+
+    train_provider = Provider(train_list,'train',4,fn)
+    test_provider = Provider(test_list,'test',4,fn)
+
+    try:
+        begin = time.time()
+        i = 0
+        for data in train_provider:
+            i += 1
+            cxyzs, dxyzs, rgbs, covars, lbls, vlens, vlens_bgs, vcidxs, cidxs, nidxs, nidxs_bgs, nidxs_lens, block_mins = \
+                default_unpack_feats_labels(data, 4)
+            if i%500==0:
+                print i
+
+        print 'batch_num {}'.format(i * 4)
+        print 'train set cost {} s'.format(time.time() - begin)
+
+    finally:
+        train_provider.close()
+        test_provider.close()
+
+
 if __name__ =="__main__":
-    test_scannet()
     # data=read_pkl('data/ModelNet40/ply_data_test1.pkl')
     # print len(data)
+    test_read_s3dis_dataset()

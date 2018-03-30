@@ -6,63 +6,6 @@ import matplotlib.pyplot as plt
 import itertools
 
 
-def get_class_colors():
-    colors=np.asarray(
-            [[0,255,0],
-            [0,0,255],
-            [93,201,235],
-            [255,255,0],
-            [255,140,0],
-            [0,0,128],
-            [255,69,0],
-            [255,127,80],
-            [255,0,0],
-            [255,250,240],
-            [255,0,255],
-            [255,255,255],
-            [105,105,105],
-            [205,92,92]],dtype=np.int)
-    return colors
-
-
-def get_semantic3d_class_colors():
-    return np.array([ [0,0,0],
-                      [123,104,238], # man-made terrain
-                      [152,251,152], # natural terrain
-                      [0,128,0],     # high vegetation
-                      [0,255,255],   # low vegetation
-                      [255,140,0],   # building
-                      [255,255,0],   # hard scape
-                      [250,240,230], # scanning artefacts
-                      [148,0,211],   # car
-                      ])
-
-def get_scannet_class_colors():
-    #['unannotated', 'wall', 'floor', 'chair', 'table', 'desk', 'bed', 'bookshelf', 'sofa', 'sink',
-    # 'bathtub', 'toilet', 'curtain', 'counter', 'door', 'window', 'shower curtain', 'refridgerator',
-    # 'picture', 'cabinet', 'otherfurniture']
-    return np.array([
-        [0,0,0],
-        [220,20,60], # wall
-        [0,0,255],   # floor
-        [255,0,0],   # chair
-        [255,140,0], # table
-        [200,180,0], # desk
-        [0,0,139],   # bed
-        [255,20,147],# bookshelf
-        [255,240,245],# sofa
-        [0,255,255], # sink
-        [147,112,219],# bathtub
-        [32,178,170], # toilet
-        [160,82,45],  # curtain
-        [222,184,135], # counter
-        [135,206,250], # window
-        [160,82,45],  # shower curtain
-        [235,235,235], # refridgerator
-        [0,100,0],    # picture
-        [250,250,210],    # cabinet
-        [188,143,143],    # otherfurniture
-    ])
 
 def output_activation(feature, filename, dim, pts):
     pt_num=pts.shape[0]
@@ -112,10 +55,10 @@ def output_points(filename,pts,colors=None):
                     f.write('{} {} {}\n'.format(pt[0],pt[1],pt[2]))
 
             else:
-                if colors.shape[0]==pts.shape[0]:
-                    f.write('{} {} {} {} {} {}\n'.format(pt[0],pt[1],pt[2],int(colors[i,0]),int(colors[i,1]),int(colors[i,2])))
+                if len(colors.shape)==2:
+                    f.write('{} {} {} {} {} {}\n'.format(pt[0],pt[1],pt[2],colors[i,0],colors[i,1],colors[i,2]))
                 else:
-                    f.write('{} {} {} {} {} {}\n'.format(pt[0],pt[1],pt[2],int(colors[0]),int(colors[1]),int(colors[2])))
+                    f.write('{} {} {} {} {} {}\n'.format(pt[0],pt[1],pt[2],colors[0],colors[1],colors[2]))
 
 
 def plot_confusion_matrix(preds, labels, names,
@@ -154,5 +97,3 @@ def plot_confusion_matrix(preds, labels, names,
     plt.xlabel('Predicted label')
     plt.savefig(save_path+'confusion_matrix.png')
     plt.close()
-
-

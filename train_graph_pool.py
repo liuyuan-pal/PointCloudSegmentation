@@ -4,9 +4,9 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model import graph_conv_pool_v7_nosum_lpmiu,classifier_v3,graph_probs_diffusion
+from model import graph_conv_pool_edge_shallow_v2,classifier_v3,graph_probs_diffusion
 from train_util import *
-from io_util import get_block_train_test_split_ds,read_fn_hierarchy,get_class_names,\
+from io_util import get_block_train_test_split_ds,get_class_names,\
     get_block_train_test_split,get_semantic3d_block_train_test_split,read_pkl
 from provider import Provider,default_unpack_feats_labels
 from draw_util import output_points,get_class_colors
@@ -49,8 +49,8 @@ def tower_loss(cxyzs, dxyzs, rgbs, covars, vlens, vlens_bgs, vcidxs,
 
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         rgb_covars=tf.concat([rgbs, covars],axis=1)
-        feats,lf=graph_conv_pool_v7_nosum_lpmiu(cxyzs, dxyzs, rgb_covars, vlens, vlens_bgs, vcidxs,
-                                                cidxs, nidxs, nidxs_lens, nidxs_bgs,m,pmiu,reuse)
+        feats,lf=graph_conv_pool_edge_shallow_v2(cxyzs, dxyzs, rgb_covars, vlens, vlens_bgs, vcidxs,
+                                      cidxs, nidxs, nidxs_lens, nidxs_bgs, m, pmiu, reuse)
         feats=tf.expand_dims(feats,axis=0)
         lf=tf.expand_dims(lf,axis=0)
         logits=classifier_v3(feats, lf, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
@@ -202,6 +202,7 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer
     test_loss=[]
     all_preds,all_labels=[],[]
     colors=get_class_colors()
+    # incorrect_rate=[]
     for i,feed_in in enumerate(testset):
         _,batch_labels,block_mins=fill_feed_dict(feed_in,feed_dict,pls,FLAGS.num_gpus)
 
@@ -212,8 +213,13 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer
         test_loss.append(loss)
         all_preds.append(preds)
 
+        # cur_labels=np.concatenate(batch_labels,axis=0)
+        # cur_preds=preds
+        # cur_rate=np.sum(cur_labels != cur_preds) / float(len(cur_preds))
+        # incorrect_rate.append(cur_rate)
+
         # output labels and true
-        if FLAGS.eval and FLAGS.eval_output:
+        if (FLAGS.eval and FLAGS.eval_output):
             cur=0
             for k in xrange(FLAGS.num_gpus):
                 xyzs=feed_dict[pls['cxyzs'][k][0]]
@@ -229,6 +235,8 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer
     test_loss=np.mean(np.asarray(test_loss))
 
     iou, miou, oiou, acc, macc, oacc = compute_iou(all_labels,all_preds)
+
+    # print np.histogram(incorrect_rate,30)
 
     log_str('mean iou {:.5} overall iou {:5} loss {:5} \n mean acc {:5} overall acc {:5} cost {:3} s'.format(
         miou, oiou, test_loss, macc, oacc, time.time()-begin_time
@@ -308,17 +316,13 @@ def build_placeholder(num_gpus):
 
 
 def train():
-    train_list,test_list=get_block_train_test_split_ds()
-    if FLAGS.use_root:
-        train_list=['/data/room_block_10_10_ds0.03/'+fn for fn in train_list]
-        test_list=['/data/room_block_10_10_ds0.03/'+fn for fn in test_list]
-    else:
-        train_list=['data/S3DIS/room_block_10_10_ds0.03/'+fn for fn in train_list]
-        test_list=['data/S3DIS/room_block_10_10_ds0.03/'+fn for fn in test_list]
+    train_list,test_list=get_block_train_test_split()
+    train_list=['data/S3DIS/sampled_train/'+fn for fn in train_list]
+    test_list=['data/S3DIS/sampled_test/'+fn for fn in test_list]
+    fn=lambda model,filename: read_pkl(filename)
 
-    train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,read_fn_hierarchy)
-    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn_hierarchy)
-    # test_provider = Provider(train_list[:2],'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn_hierarchy)
+    train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,fn)
+    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,fn)
 
     try:
         pls=build_placeholder(FLAGS.num_gpus)
@@ -356,12 +360,11 @@ def train():
 
 
 def eval():
-    from functools import partial
     train_list,test_list=get_block_train_test_split()
-    test_list=['data/S3DIS/room_block_10_10/'+fn for fn in test_list]
+    test_list=['data/S3DIS/sampled_test/'+fn for fn in test_list]
+    fn=lambda model,filename: read_pkl(filename)
 
-    read_fn_hierarchy_unsample=partial(read_fn_hierarchy,presample=False)
-    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn_hierarchy_unsample)
+    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,fn)
 
     try:
         pls=build_placeholder(FLAGS.num_gpus)
