@@ -2,7 +2,9 @@
 TF_INC=$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_include())')
 TF_LIB=$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_lib())')
 
-g++ -std=c++11 ComputePermutationInfo.cc ComputePermutationInfo.cpp \
+/usr/local/cuda/bin/nvcc ComputePermutationInfo.cu -o ComputePermutationInfo.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
+
+g++ -std=c++11 ComputePermutationInfo.cc ComputePermutationInfo.cpp ComputePermutationInfo.cu.o \
             -shared -o ComputePermutationInfoOp.so \
             -fPIC -I$TF_INC -I$TF_INC/external/nsync/public \
             -L$TF_LIB -ltensorflow_framework \

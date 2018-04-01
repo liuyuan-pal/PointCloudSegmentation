@@ -32,6 +32,7 @@ void computeNeighborIdxsKernel(
         float * xyzs,               // [pn,3]
         int *begs,                  // [pn]
         int *idxs,                  // [en]
+        int *cens,                  // [en]
         float squared_nn_size,
         int pn
 )
@@ -43,6 +44,7 @@ void computeNeighborIdxsKernel(
     float cy=xyzs[pi*3+1];
     float cz=xyzs[pi*3+2];
     int* cur_idxs=&idxs[begs[pi]];
+    int* cur_cens=&cens[begs[pi]];
     for(int i=0;i<pn;i++)
     {
         float tx=xyzs[i*3+0];
@@ -52,6 +54,8 @@ void computeNeighborIdxsKernel(
         {
             *cur_idxs=i;
             cur_idxs++;
+            *cur_cens=pi;
+            cur_cens++;
         }
     }
 }
@@ -80,7 +84,8 @@ int searchNeighborhoodCountImpl(
 
 void searchNeighborhoodImpl(
         float * xyzs,               // [pn,3]
-        int *idxs,                  // [pn]
+        int *idxs,                  // [en]
+        int *cens,                  // [en]
         int *begs,                  // [pn]
         float squared_nn_size,
         int pn
@@ -90,7 +95,7 @@ void searchNeighborhoodImpl(
     if (pn % 1024 > 0) block_num++;
     dim3 block_dim(block_num);
     dim3 thread_dim(1024);
-    computeNeighborIdxsKernel<<<block_dim,thread_dim>>>(xyzs,begs,idxs,squared_nn_size,pn);
+    computeNeighborIdxsKernel<<<block_dim,thread_dim>>>(xyzs,begs,idxs,cens,squared_nn_size,pn);
 }
 
 __global__

@@ -1,10 +1,11 @@
 #include "../TFCudaCommon.h"
 
+template<typename T>
 __global__
 void permutateFeatureKernel(
-        float *feats,               // [pn,ps]
+        T *feats,               // [pn,ps]
         int *idxs,                  // [pn]
-        float *permutated_feats,    // [pn,ps]
+        T *permutated_feats,    // [pn,ps]
         int pn,
         int ps
 )
@@ -16,10 +17,11 @@ void permutateFeatureKernel(
     permutated_feats[pi*ps+fi]=feats[idxs[pi]*ps+fi];
 }
 
+template<typename T>
 void permutateFeature(
-        float *feats,               // [pn,ps]
+        T *feats,               // [pn,ps]
         int *idxs,                  // [pn]
-        float *permutated_feats,    // [pn,ps]
+        T *permutated_feats,    // [pn,ps]
         int pn,
         int ps
 )
@@ -41,3 +43,7 @@ void permutateFeature(
     dim3 thread_dim(tdim0,tdim1,tdim2);
     permutateFeatureKernel <<<block_dim,thread_dim>>>(feats,idxs,permutated_feats,pn,ps);
 }
+
+
+template void permutateFeature<int>(int*,int*,int*,int,int);
+template void permutateFeature<float>(float*,int*,float*,int,int);

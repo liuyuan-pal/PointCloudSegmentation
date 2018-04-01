@@ -7,19 +7,22 @@ TF_LIB=$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_lib())')
 /usr/local/cuda/bin/nvcc PoolingIndex/ComputeVoxelIdx.cu -o build/ComputeVoxelIdx.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
 /usr/local/cuda/bin/nvcc PoolingIndex/PermutateFeature.cu -o build/PermutateFeature.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
 /usr/local/cuda/bin/nvcc PoolingIndex/SearchNeighborhood.cu -o build/SearchNeighborhood.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
+/usr/local/cuda/bin/nvcc PoolingIndex/ComputePermutationInfo.cu -o build/ComputePermutationInfo.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
 
 
 cu_lib="build/ComputeDiffXYZ.cu.o
         build/ComputeVoxelIdx.cu.o
         build/PermutateFeature.cu.o
-        build/SearchNeighborhood.cu.o"
+        build/SearchNeighborhood.cu.o
+        build/ComputePermutationInfo.cu.o
+        "
 
-cc_file="ComputeDiffXYZ.cc
-        ComputeVoxelIdx.cc
-        PermutateFeature.cc
-        SearchNeighborhood.cc
-        ComputePermutationInfo.cpp
-        ComputePermutationInfo.cc
+cc_file="PoolingIndex/ComputeDiffXYZ.cc
+        PoolingIndex/ComputeVoxelIdx.cc
+        PoolingIndex/PermutateFeature.cc
+        PoolingIndex/SearchNeighborhood.cc
+        PoolingIndex/ComputePermutationInfo.cpp
+        PoolingIndex/ComputePermutationInfo.cc
         "
 
 g++ -std=c++11 -shared ${cu_lib} ${cc_file} -o build/PoolingOps.so \

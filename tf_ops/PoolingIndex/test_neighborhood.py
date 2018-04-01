@@ -10,16 +10,16 @@ SearchNeighborhoodOp=tf.load_op_library('./SearchNeighborhoodOp.so')
 ComputeVoxelIdxOp=tf.load_op_library('./ComputeVoxelIdxOp.so')
 
 
-pn=20480
+pn=10240
 search_radius=0.1
 pts=np.random.uniform(-1.0,1.0,[pn,3])
 pts[:,2]=0.0
 
 pts_pl=tf.placeholder(tf.float32,[None,3],'pts')
-idxs,lens,begs=SearchNeighborhoodOp.search_neighborhood_brute_force(pts_pl,squared_nn_size=search_radius*search_radius)
+idxs,lens,begs,cens=SearchNeighborhoodOp.search_neighborhood_brute_force(pts_pl,squared_nn_size=search_radius*search_radius)
 
-voxel_idxs=ComputeVoxelIdxOp.compute_voxel_index(pts_pl,voxel_len=0.3,block_size=2.0)
-idxs2,lens2,begs2=SearchNeighborhoodOp.search_neighborhood_with_bins(pts_pl,voxel_idxs,bin_len=0.3,squared_nn_size=search_radius*search_radius)
+voxel_idxs=ComputeVoxelIdxOp.compute_voxel_index(pts_pl,voxel_len=search_radius,block_size=2.0)
+idxs2,lens2,begs2=SearchNeighborhoodOp.search_neighborhood_with_bins(pts_pl,voxel_idxs,bin_len=search_radius,squared_nn_size=search_radius*search_radius)
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
@@ -28,7 +28,7 @@ config.log_device_placement = False
 with tf.Session(config=config) as sess:
     bg=time.time()
     for i in xrange(10):
-        nidxs,nlens,nbegs=sess.run([idxs,lens,begs],feed_dict={pts_pl:pts})
+        nidxs,nlens,nbegs,ncens=sess.run([idxs,lens,begs,cens],feed_dict={pts_pl:pts})
     print 'cost {} s'.format(time.time()-bg)
 
     bg=time.time()
@@ -59,4 +59,8 @@ for i in xrange(10):
     print np.mean(np.sqrt(np.sum((pts[nidxs_py[i]]-pts[i,:])**2,axis=1)))
 
 print len(np.concatenate(nidxs_py,axis=0))
+
+for i in xrange(pn):
+    for j in xrange(nlens[i]):
+        assert ncens[nbegs[i]+j]==i
 

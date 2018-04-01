@@ -566,11 +566,12 @@ def graph_conv_edge(sxyzs,feats,ifn,fc_dims,ofn,nidxs,nidxs_lens,nidxs_bgs,cidxs
         sfeats = tf.concat([sfeats,sxyzs],axis=1)
 
         for idx,fd in enumerate(fc_dims):
-            sfeats=tf.contrib.layers.fully_connected(sfeats, num_outputs=fd, scope='{}_fc_{}'.format(name,idx),
+            cfeats=tf.contrib.layers.fully_connected(sfeats, num_outputs=fd, scope='{}_fc_{}'.format(name,idx),
                                                      activation_fn=tf.nn.relu, reuse=reuse)
+            sfeats=tf.concat([cfeats,sfeats],axis=1)
 
         sfeats=tf.contrib.layers.fully_connected(sfeats, num_outputs=ifn*ofn, scope='{}_fc_ew'.format(name),
-                                                 activation_fn=tf.nn.relu, reuse=reuse)
+                                                 activation_fn=None, reuse=reuse)
 
         ew=tf.reshape(sfeats,[-1,ifn,ofn])
         feats=neighbor_ops.neighbor_scatter(feats, nidxs, nidxs_lens, nidxs_bgs, use_diff=False)      # [en,ifn]
@@ -593,11 +594,12 @@ def graph_conv_edge_xyz(sxyzs,ifn,fc_dims,ofn,nidxs,nidxs_lens,nidxs_bgs,cidxs,n
     with tf.name_scope(name):
         sfeats=sxyzs
         for idx,fd in enumerate(fc_dims):
-            sfeats=tf.contrib.layers.fully_connected(sfeats, num_outputs=fd, scope='{}_fc_{}'.format(name,idx),
+            cfeats=tf.contrib.layers.fully_connected(sfeats, num_outputs=fd, scope='{}_fc_{}'.format(name,idx),
                                                      activation_fn=tf.nn.relu, reuse=reuse)
+            sfeats=tf.concat([cfeats,sfeats],axis=1)
 
         sfeats=tf.contrib.layers.fully_connected(sfeats, num_outputs=ifn*ofn, scope='{}_fc_ew'.format(name),
-                                                 activation_fn=tf.nn.relu, reuse=reuse)
+                                                 activation_fn=None, reuse=reuse)
 
         ew=tf.reshape(sfeats,[-1,ifn,ofn])
         sxyzs=tf.expand_dims(sxyzs,axis=1)

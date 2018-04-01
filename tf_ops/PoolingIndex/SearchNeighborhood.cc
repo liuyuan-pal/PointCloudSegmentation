@@ -19,7 +19,8 @@ int searchNeighborhoodCountImpl(
 
 void searchNeighborhoodImpl(
         float * xyzs,               // [pn,3]
-        int *idxs,                  // [pn]
+        int *idxs,                  // [en]
+        int *cens,                  // [en]
         int *begs,                  // [pn]
         float squared_nn_size,
         int pn
@@ -32,6 +33,7 @@ REGISTER_OP("SearchNeighborhoodBruteForce")
         .Output("idxs: int32")     // [en]
         .Output("lens: int32")     // [pn]
         .Output("begs: int32")     // [pn]
+        .Output("cens: int32")     // [en]
         .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
             ::tensorflow::shape_inference::ShapeHandle xyzs_shape;
             TF_RETURN_IF_ERROR(c->WithRank(c->input(0),2,&xyzs_shape));
@@ -43,6 +45,7 @@ REGISTER_OP("SearchNeighborhoodBruteForce")
             c->set_output(0,c->MakeShape(unknow_dims));
             c->set_output(1,c->MakeShape(dims));
             c->set_output(2,c->MakeShape(dims));
+            c->set_output(3,c->MakeShape(unknow_dims));
             return Status::OK();
         });
 
@@ -63,7 +66,7 @@ public:
         OP_REQUIRES(context,xyzs.dim_size(1)==3,errors::InvalidArgument("xyzs dim 1"));
 
         std::initializer_list<int64> dims={pn};
-        Tensor *idxs,*lens,*begs;
+        Tensor *idxs,*lens,*begs,*cens;
         OP_REQUIRES_OK(context,context->allocate_output(1,TensorShape(dims),&lens));
         OP_REQUIRES_OK(context,context->allocate_output(2,TensorShape(dims),&begs));
         auto xyzs_data=const_cast<float*>(xyzs.shaped<float,2>({pn,3}).data());
@@ -74,8 +77,10 @@ public:
 
         std::initializer_list<int64> dims2={en};
         OP_REQUIRES_OK(context,context->allocate_output(0,TensorShape(dims2),&idxs));
+        OP_REQUIRES_OK(context,context->allocate_output(3,TensorShape(dims2),&cens));
         auto idxs_data=const_cast<int*>(idxs->shaped<int,1>({en}).data());
-        searchNeighborhoodImpl(xyzs_data,idxs_data,begs_data,squared_nn_size,pn);
+        auto cens_data=const_cast<int*>(cens->shaped<int,1>({en}).data());
+        searchNeighborhoodImpl(xyzs_data,idxs_data,cens_data,begs_data,squared_nn_size,pn);
     }
 };
 

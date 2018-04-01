@@ -11,18 +11,20 @@
 
 using namespace tensorflow;
 
+template<typename T>
 void permutateFeature(
-        float *feats,               // [pn,ps]
+        T *feats,               // [pn,ps]
         int *idxs,                  // [pn]
-        float *permutated_feats,    // [pn,ps]
+        T *permutated_feats,    // [pn,ps]
         int pn,
         int ps
 );
 
 REGISTER_OP("PermutateFeatureBackward")
-        .Input("feats: float32")                 // [pn,ps]
+        .Attr("T: {float32,int32}")
+        .Input("feats: T")                 // [pn,ps]
         .Input("idxs: int32")                    // [pn]
-        .Output("permutated_feats: float32")     // [pn,ps]
+        .Output("permutated_feats: T")     // [pn,ps]
         .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
             ::tensorflow::shape_inference::ShapeHandle feats_shape;
             ::tensorflow::shape_inference::ShapeHandle idxs_shape;
@@ -34,6 +36,7 @@ REGISTER_OP("PermutateFeatureBackward")
         });
 
 
+template<typename T>
 class PermutateFeatureBackwardGPUOp: public OpKernel
 {
 public:
@@ -53,21 +56,25 @@ public:
         std::initializer_list<int64> dims={pn,ps};
         Tensor *permutated_feats;
         OP_REQUIRES_OK(context,context->allocate_output(0,TensorShape(dims),&permutated_feats));
-        auto feats_data= const_cast<float*>(feats.shaped<float,2>({pn,ps}).data());
+        auto feats_data= const_cast<T*>(feats.shaped<T,2>({pn,ps}).data());
         auto idxs_data= const_cast<int*>(idxs.shaped<int,1>({pn}).data());
-        auto permutated_feats_data= const_cast<float*>(permutated_feats->shaped<float,2>({pn,ps}).data());
+        auto permutated_feats_data= const_cast<T*>(permutated_feats->shaped<T,2>({pn,ps}).data());
         permutateFeature(feats_data, idxs_data, permutated_feats_data, pn, ps);
     }
 };
 
-REGISTER_KERNEL_BUILDER(Name("PermutateFeatureBackward").Device(DEVICE_GPU), PermutateFeatureBackwardGPUOp);
+REGISTER_KERNEL_BUILDER(Name("PermutateFeatureBackward").Device(DEVICE_GPU)
+    .TypeConstraint<float>("T"), PermutateFeatureBackwardGPUOp<float>);
+REGISTER_KERNEL_BUILDER(Name("PermutateFeatureBackward").Device(DEVICE_GPU)
+    .TypeConstraint<int>("T"), PermutateFeatureBackwardGPUOp<int>);
 
 
 REGISTER_OP("PermutateFeature")
-        .Input("feats: float32")                 // [pn,ps]
+        .Attr("T: {float32,int32}")
+        .Input("feats: T")                 // [pn,ps]
         .Input("idxs: int32")                    // [pn]
         .Input("back_idxs: int32")               // [pn]
-        .Output("permutated_feats: float32")     // [pn,ps]
+        .Output("permutated_feats: T")     // [pn,ps]
         .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
             ::tensorflow::shape_inference::ShapeHandle feats_shape;
             ::tensorflow::shape_inference::ShapeHandle idxs_shape;
@@ -81,6 +88,7 @@ REGISTER_OP("PermutateFeature")
         });
 
 
+template<typename T>
 class PermutateFeatureGPUOp: public OpKernel
 {
 public:
@@ -102,11 +110,14 @@ public:
         std::initializer_list<int64> dims={pn,ps};
         Tensor *permutated_feats;
         OP_REQUIRES_OK(context,context->allocate_output(0,TensorShape(dims),&permutated_feats));
-        auto feats_data= const_cast<float*>(feats.shaped<float,2>({pn,ps}).data());
+        auto feats_data= const_cast<T*>(feats.shaped<T,2>({pn,ps}).data());
         auto idxs_data= const_cast<int*>(idxs.shaped<int,1>({pn}).data());
-        auto permutated_feats_data= const_cast<float*>(permutated_feats->shaped<float,2>({pn,ps}).data());
+        auto permutated_feats_data= const_cast<T*>(permutated_feats->shaped<T,2>({pn,ps}).data());
         permutateFeature(feats_data, idxs_data, permutated_feats_data, pn, ps);
     }
 };
 
-REGISTER_KERNEL_BUILDER(Name("PermutateFeature").Device(DEVICE_GPU), PermutateFeatureGPUOp);
+REGISTER_KERNEL_BUILDER(Name("PermutateFeature").Device(DEVICE_GPU)
+    .TypeConstraint<int>("T"), PermutateFeatureGPUOp<int>);
+REGISTER_KERNEL_BUILDER(Name("PermutateFeature").Device(DEVICE_GPU)
+    .TypeConstraint<float>("T"), PermutateFeatureGPUOp<float>);
