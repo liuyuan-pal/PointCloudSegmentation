@@ -775,20 +775,62 @@ def classifier_v3(feats, pfeats, is_training, num_classes, reuse=False, use_bn=F
 
             # pfeats = tf.cond(is_training,lambda:tf.nn.dropout(pfeats,0.7),lambda:pfeats)
             # feats = tf.cond(is_training,lambda:tf.nn.dropout(feats,0.7),lambda:feats)
+            feats = tf.cond(is_training, lambda: tf.nn.dropout(feats, 0.5), lambda: feats)
             normalizer_params['scope']='class_mlp1_bn'
             class_mlp1 = tf.contrib.layers.conv2d(
                 feats, num_outputs=512, scope='class_mlp1',normalizer_params=normalizer_params)
             class_mlp1=tf.concat([class_mlp1, pfeats], axis=3)
-            class_mlp1 = tf.cond(is_training, lambda: tf.nn.dropout(class_mlp1, 0.7), lambda: class_mlp1)
+            class_mlp1 = tf.cond(is_training, lambda: tf.nn.dropout(class_mlp1, 0.5), lambda: class_mlp1)
 
             normalizer_params['scope']='class_mlp2_bn'
             class_mlp2 = tf.contrib.layers.conv2d(
                 class_mlp1, num_outputs=256, scope='class_mlp2',normalizer_params=normalizer_params)
             class_mlp2=tf.concat([class_mlp2, pfeats], axis=3)
-            class_mlp2=tf.cond(is_training,lambda:tf.nn.dropout(class_mlp2,0.7),lambda:class_mlp2)
+            class_mlp2=tf.cond(is_training,lambda:tf.nn.dropout(class_mlp2,0.5),lambda:class_mlp2)
 
             logits = tf.contrib.layers.conv2d(
                 class_mlp2, num_outputs=num_classes, scope='class_mlp3',activation_fn=None,normalizer_fn=None)
+
+        logits=tf.squeeze(logits,axis=2,name='logits')
+
+    return logits
+
+def classifier_v5(feats, pfeats, is_training, num_classes, reuse=False, use_bn=False, name="segmentation_classifier"):
+    '''
+
+    :param feats: n,k,f
+    :param pfeats:
+    :param is_training:
+    :param num_classes:
+    :param reuse:
+    :return:
+    '''
+    normalizer_params={'scale':False,'is_training':is_training,'reuse':reuse}
+    feats=tf.expand_dims(feats,axis=2)     # n,k,1,2048+6
+    pfeats=tf.expand_dims(pfeats, axis=2)  # n,k,1,6
+    bn=tf.contrib.layers.batch_norm if use_bn else None
+    with tf.name_scope(name):
+        with tf.variable_scope(name):
+            with framework.arg_scope([tf.contrib.layers.conv2d],kernel_size=[1,1],stride=1,
+                                     padding='VALID',activation_fn=tf.nn.relu,reuse=reuse,
+                                     normalizer_fn=bn):
+
+                # pfeats = tf.cond(is_training,lambda:tf.nn.dropout(pfeats,0.7),lambda:pfeats)
+                # feats = tf.cond(is_training,lambda:tf.nn.dropout(feats,0.7),lambda:feats)
+                normalizer_params['scope']='class_mlp1_bn'
+                class_mlp1 = tf.contrib.layers.conv2d(
+                    feats, num_outputs=512, scope='class_mlp1',normalizer_params=normalizer_params)
+                class_mlp1=tf.concat([class_mlp1, pfeats], axis=3)
+                class_mlp1 = tf.cond(is_training, lambda: tf.nn.dropout(class_mlp1, 0.7), lambda: class_mlp1)
+
+                normalizer_params['scope']='class_mlp2_bn'
+                class_mlp2 = tf.contrib.layers.conv2d(
+                    class_mlp1, num_outputs=256, scope='class_mlp2',normalizer_params=normalizer_params)
+                class_mlp2=tf.concat([class_mlp2, pfeats], axis=3)
+                class_mlp2=tf.cond(is_training,lambda:tf.nn.dropout(class_mlp2,0.7),lambda:class_mlp2)
+
+                logits = tf.contrib.layers.conv2d(
+                    class_mlp2, num_outputs=num_classes, scope='class_mlp3',activation_fn=None,normalizer_fn=None)
 
         logits=tf.squeeze(logits,axis=2,name='logits')
 

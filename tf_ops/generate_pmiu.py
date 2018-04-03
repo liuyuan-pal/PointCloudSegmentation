@@ -1,7 +1,11 @@
+import os
+path = os.path.split(os.path.realpath(__file__))[0]
+import sys
+sys.path.append(path)
+sys.path.append(path+'/test')
 import numpy as np
 from sklearn.cluster import KMeans
-from test.draw_util import output_points
-import os
+from draw_util import output_points
 
 
 def generate_pmiu(center_num=5):

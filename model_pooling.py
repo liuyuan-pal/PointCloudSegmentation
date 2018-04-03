@@ -2,7 +2,7 @@ from tf_ops.graph_conv_layer import *
 from tf_ops.graph_pooling_layer import *
 import tensorflow.contrib.framework as framework
 from functools import partial
-from model import graph_pool_stage,graph_unpool_stage,classifier_v3
+from model import graph_pool_stage,graph_unpool_stage,classifier_v3,classifier_v5
 from tensorflow.python.client import timeline
 
 
@@ -21,19 +21,22 @@ def graph_conv_pool_block_edge_new(xyzs, feats, stage_idx, layer_idx, ofn, ncens
 
 
 def graph_conv_pool_block_edge_xyz_new(sxyzs, stage_idx, gxyz_dim, ncens, nidxs, nlens, nbegs, reuse):
-    # sxyzs = tf.contrib.layers.fully_connected(sxyzs, num_outputs=gxyz_dim, scope='{}_xyz_fc'.format(stage_idx),
-    #                                           activation_fn=tf.nn.relu, reuse=reuse)
-    xyz_gc=graph_conv_edge_xyz(sxyzs, 3, [gxyz_dim/2, gxyz_dim/2], gxyz_dim, nidxs, nlens, nbegs, ncens,
-                               '{}_xyz_gc'.format(stage_idx),reuse=reuse)
+    xyz_gc=graph_conv_edge_xyz_v2(sxyzs, gxyz_dim, [gxyz_dim/2, gxyz_dim/2], gxyz_dim, nidxs, nlens, nbegs, ncens,
+                                  '{}_xyz_gc'.format(stage_idx),reuse=reuse)
     return xyz_gc
 
 
-def graph_conv_pool_stage_edge_new(stage_idx, xyzs, dxyz, feats, feats_dim, gxyz_dim, gc_dims, gfc_dims, final_dim, radius, reuse):
+def graph_conv_pool_stage_edge_new(stage_idx, xyzs, dxyz, feats, feats_dim, gxyz_dim, gc_dims, gfc_dims, final_dim,
+                                   radius, voxel_size, reuse):
+    ops=[]
     with tf.name_scope('stage_{}'.format(stage_idx)):
         nidxs,nlens,nbegs,ncens=search_neighborhood(xyzs,radius)
 
         sxyzs = neighbor_ops.neighbor_scatter(xyzs, nidxs, nlens, nbegs, use_diff=True)  # [en,ifn]
+        sxyzs /= radius   # rescale
+
         xyz_gc=graph_conv_pool_block_edge_xyz_new(sxyzs,stage_idx,gxyz_dim,ncens,nidxs,nlens,nbegs,reuse)
+        ops.append(xyz_gc)
         cfeats = tf.concat([xyz_gc, feats], axis=1)
 
         cdim = feats_dim + gxyz_dim
@@ -43,32 +46,36 @@ def graph_conv_pool_stage_edge_new(stage_idx, xyzs, dxyz, feats, feats_dim, gxyz
         for gd in gc_dims:
             conv_feats = conv_fn(sxyzs, cfeats, stage_idx, layer_idx, gd)
             cfeats = tf.concat([cfeats, conv_feats], axis=1)
+            ops.append(conv_feats)
             layer_idx += 1
             cdim += gd
 
         with framework.arg_scope([tf.contrib.layers.fully_connected], activation_fn=tf.nn.relu, reuse=reuse):
             with tf.name_scope('fc_global{}'.format(stage_idx)):
+                dxyz= dxyz / voxel_size
+
                 fc = tf.concat([cfeats, dxyz], axis=1)
                 for i, gfd in enumerate(gfc_dims):
                     fc = tf.contrib.layers.fully_connected(fc, num_outputs=gfd,
-                                                           scope='{}_gfc{}'.format(stage_idx, i))
+                                                           scope='{}_{}_gfc'.format(stage_idx, i))
                 fc_final = tf.contrib.layers.fully_connected(fc, num_outputs=final_dim, activation_fn=None,
-                                                             scope='{}_gfc_final'.format(stage_idx))
+                                                             scope='{}_final_gfc'.format(stage_idx))
 
-    return fc_final, cfeats  # cfeats: [pn,fc_dims+gxyz_dim+feats_dim]
+    return fc_final, cfeats, ops  # cfeats: [pn,fc_dims+gxyz_dim+feats_dim]
 
 
-def graph_conv_pool_edge_new(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, reuse=False):
+def graph_conv_pool_edge_new(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, voxel_len, block_size, reuse=False):
     with tf.name_scope('base_graph_conv_edge_net'):
         with tf.variable_scope('base_graph_conv_edge_net',reuse=reuse):
             with tf.name_scope('conv_stage0'):
-                fc0, lf0 = graph_conv_pool_stage_edge_new(0,xyzs,dxyzs,feats,tf.shape(feats)[1],radius=0.1,reuse=reuse,
-                                                          gxyz_dim=8,gc_dims=[8,16],gfc_dims=[16,32,64],final_dim=64)
+                fc0, lf0, ops0 = graph_conv_pool_stage_edge_new(0, xyzs, dxyzs, feats, tf.shape(feats)[1], radius=0.1, reuse=reuse,
+                                                                gxyz_dim=8, gc_dims=[8,16], gfc_dims=[16,32,64], final_dim=64,
+                                                                voxel_size=voxel_len)
                 fc0_pool = graph_pool_stage(0, fc0, vlens, vbegs)
 
             with tf.name_scope('conv_stage1'):
-                fc1, lf1 = graph_conv_pool_stage_edge_new(1,pxyzs,pxyzs,fc0_pool,64,radius=0.5,reuse=reuse,
-                                                          gxyz_dim=8,gc_dims=[32,32,64,64,128],gfc_dims=[128,256,384],final_dim=384)
+                fc1, lf1, ops1 = graph_conv_pool_stage_edge_new(1, pxyzs, pxyzs, fc0_pool, 64, radius=0.5, reuse=reuse, voxel_size=block_size,
+                                                                gxyz_dim=8, gc_dims=[32,32,64,64,128], gfc_dims=[128,256,384], final_dim=384)
                 fc1_pool = tf.reduce_max(fc1, axis=0)
 
             with tf.name_scope('unpool_stage1'):
@@ -81,19 +88,28 @@ def graph_conv_pool_edge_new(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, reu
 
             lf = tf.concat([fc0, lf0], axis=1)
 
-    return upf0, lf
+            ops1=[graph_unpool_stage(1+idx, op, vlens, vbegs, vcens) for idx,op in enumerate(ops1)]
+            ops0+=ops1
 
-def graph_conv_pool_edge_new_v2(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, reuse=False):
+    return upf0, lf, ops0
+
+def graph_conv_pool_edge_new_v2(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, voxel_size, block_size, reuse=False):
     with tf.name_scope('base_graph_conv_edge_net'):
         with tf.variable_scope('base_graph_conv_edge_net',reuse=reuse):
             with tf.name_scope('conv_stage0'):
-                fc0, lf0 = graph_conv_pool_stage_edge_new(0,xyzs,dxyzs,feats,tf.shape(feats)[1],radius=0.1,reuse=reuse,
-                                                          gxyz_dim=8,gc_dims=[16,16,16,16],gfc_dims=[64,64,64],final_dim=64)
+                # 8 64 64*2
+                fc0, lf0, ops0 = graph_conv_pool_stage_edge_new(0, xyzs, dxyzs, feats, tf.shape(feats)[1], radius=0.1,
+                                                                reuse=reuse, voxel_size=voxel_size,
+                                                                gxyz_dim=16, gc_dims=[16,16,16,16,16],
+                                                                gfc_dims=[64,64,64], final_dim=64)
                 fc0_pool = graph_pool_stage(0, fc0, vlens, vbegs)
 
             with tf.name_scope('conv_stage1'):
-                fc1, lf1 = graph_conv_pool_stage_edge_new(1,pxyzs,pxyzs,fc0_pool,64,radius=0.5,reuse=reuse,
-                                                          gxyz_dim=16,gc_dims=[32,32,32,64,64,64],gfc_dims=[256,256,256],final_dim=512)
+                # 16 288 512*2
+                fc1, lf1, ops1 = graph_conv_pool_stage_edge_new(1, pxyzs, pxyzs, fc0_pool, 64, radius=0.5,
+                                                                reuse=reuse, voxel_size=block_size,
+                                                                gxyz_dim=16, gc_dims=[32,32,32,64,64,64],
+                                                                gfc_dims=[256,256,256], final_dim=512)
                 fc1_pool = tf.reduce_max(fc1, axis=0)
 
             with tf.name_scope('unpool_stage1'):
@@ -106,7 +122,10 @@ def graph_conv_pool_edge_new_v2(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, 
 
             lf = tf.concat([fc0, lf0], axis=1)
 
-    return upf0, lf
+            ops1=[graph_unpool_stage(1+idx, op, vlens, vbegs, vcens) for idx,op in enumerate(ops1)]
+            ops0+=ops1
+    # 1528 + 132
+    return upf0, lf, ops0
 
 
 def graph_conv_semantic_pool_stage(stage_idx, dxyz, feats, gfc_dims, final_dim, reuse):
@@ -115,24 +134,30 @@ def graph_conv_semantic_pool_stage(stage_idx, dxyz, feats, gfc_dims, final_dim, 
             with tf.name_scope('fc_global{}'.format(stage_idx)):
                 fc = tf.concat([feats, dxyz], axis=1)
                 for i, gfd in enumerate(gfc_dims):
-                    fc = tf.contrib.layers.fully_connected(fc, num_outputs=gfd,
-                                                           scope='{}_gfc{}'.format(stage_idx, i))
+                    fc = tf.contrib.layers.fully_connected(fc, num_outputs=gfd,scope='{}_gfc{}'.format(stage_idx, i))
                 fc_final = tf.contrib.layers.fully_connected(fc, num_outputs=final_dim, activation_fn=None,
                                                              scope='{}_gfc_final'.format(stage_idx))
 
     return fc_final  # cfeats: [pn,fc_dims+gxyz_dim+feats_dim]
 
 
-def graph_conv_semantic_pool_v1(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, reuse=False):
+def graph_conv_semantic_pool_v1(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, voxel_size, block_size, reuse=False):
     with tf.name_scope('refine_graph_conv_edge_net'):
         with tf.variable_scope('refine_graph_conv_edge_net',reuse=reuse):
+            feats=tf.contrib.layers.fully_connected(feats, num_outputs=256,scope='semantic_embed',
+                                                    activation_fn=tf.nn.relu, reuse=reuse)
             with tf.name_scope('conv_stage0'):
-                fc0=graph_conv_semantic_pool_stage(0,dxyzs,feats,gfc_dims=[128,128,128],final_dim=128,reuse=reuse)
+                fc0, lf0 , _ = graph_conv_pool_stage_edge_new(0, xyzs, dxyzs, feats, 256, radius=0.1,
+                                                              reuse=reuse, voxel_size=voxel_size,
+                                                              gxyz_dim=16, gc_dims=[16,16],
+                                                              gfc_dims=[128,128,128], final_dim=256)
                 fc0_pool = graph_pool_stage(0, fc0, vlens, vbegs)
 
             with tf.name_scope('conv_stage1'):
-                fc1, lf1 = graph_conv_pool_stage_edge_new(1,pxyzs,pxyzs,fc0_pool,128,radius=0.5,reuse=reuse,
-                                                          gxyz_dim=16,gc_dims=[64,64,64,64],gfc_dims=[256,256,256],final_dim=256)
+                fc1, lf1 , _ = graph_conv_pool_stage_edge_new(1, pxyzs, pxyzs, fc0_pool, 256, radius=1.5,
+                                                              reuse=reuse, voxel_size=block_size,
+                                                              gxyz_dim=16, gc_dims=[64,64,64,64],
+                                                              gfc_dims=[128,128,128], final_dim=256)
                 fc1_pool = tf.reduce_max(fc1, axis=0)
 
             with tf.name_scope('unpool_stage1'):
@@ -141,9 +166,99 @@ def graph_conv_semantic_pool_v1(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, 
 
             with tf.name_scope('unpool_stage0'):
                 upfeats0 = graph_unpool_stage(0, upf1, vlens, vbegs, vcens)
-                upf0 = tf.concat([upfeats0, fc0], axis=1)
+                upf0 = tf.concat([upfeats0, fc0, lf0], axis=1)
 
-    return upf0
+            lf=tf.concat([lf0,fc0],axis=1)
+
+    return upf0,lf
+
+
+def graph_conv_pool_block_edge_simp(xyzs, feats, stage_idx, layer_idx, ofn, ncens, nidxs, nlens, nbegs, reuse):
+    feats = tf.contrib.layers.fully_connected(feats, num_outputs=ofn, scope='{}_{}_fc'.format(stage_idx, layer_idx),
+                                              activation_fn=tf.nn.relu, reuse=reuse)
+    feats = graph_conv_edge_simp(xyzs, feats, ofn, [ofn/2, ofn/2], [ofn/2, ofn/2], ofn, nidxs, nlens, nbegs, ncens,
+                                 '{}_{}_gc'.format(stage_idx,layer_idx), reuse=reuse)
+    return feats
+
+
+def graph_conv_pool_block_edge_xyz_simp(sxyzs, stage_idx, gxyz_dim, ncens, nidxs, nlens, nbegs, reuse):
+    xyz_gc=graph_conv_edge_xyz_simp(sxyzs, gxyz_dim, [gxyz_dim/2, gxyz_dim/2], [gxyz_dim/2, gxyz_dim/2], gxyz_dim,
+                                    nidxs, nlens, nbegs, ncens, '{}_xyz_gc'.format(stage_idx), reuse=reuse)
+    return xyz_gc
+
+
+def graph_conv_pool_stage_edge_simp(stage_idx, xyzs, dxyz, feats, feats_dim, gxyz_dim, gc_dims, gfc_dims, final_dim,
+                                    radius, voxel_size, reuse):
+    ops=[]
+    with tf.name_scope('stage_{}'.format(stage_idx)):
+        nidxs,nlens,nbegs,ncens=search_neighborhood(xyzs,radius)
+
+        sxyzs = neighbor_ops.neighbor_scatter(xyzs, nidxs, nlens, nbegs, use_diff=True)  # [en,ifn]
+        sxyzs /= radius   # rescale
+
+        xyz_gc=graph_conv_pool_block_edge_xyz_simp(sxyzs,stage_idx,gxyz_dim,ncens,nidxs,nlens,nbegs,reuse)
+        ops.append(xyz_gc)
+        cfeats = tf.concat([xyz_gc, feats], axis=1)
+
+        cdim = feats_dim + gxyz_dim
+        conv_fn = partial(graph_conv_pool_block_edge_simp, ncens=ncens, nidxs=nidxs, nlens=nlens, nbegs=nbegs, reuse=reuse)
+
+        layer_idx = 1
+        for gd in gc_dims:
+            conv_feats = conv_fn(sxyzs, cfeats, stage_idx, layer_idx, gd)
+            cfeats = tf.concat([cfeats, conv_feats], axis=1)
+            ops.append(conv_feats)
+            layer_idx += 1
+            cdim += gd
+
+        with framework.arg_scope([tf.contrib.layers.fully_connected], activation_fn=tf.nn.relu, reuse=reuse):
+            with tf.name_scope('fc_global{}'.format(stage_idx)):
+                dxyz= dxyz / voxel_size
+                fc_feats = tf.concat([cfeats, dxyz], axis=1)
+                for i, gfd in enumerate(gfc_dims):
+                    fc = tf.contrib.layers.fully_connected(fc_feats, num_outputs=gfd,
+                                                           scope='{}_{}_gfc'.format(stage_idx, i))
+                    fc_feats=tf.concat([fc,fc_feats],axis=1)
+
+                fc_final = tf.contrib.layers.fully_connected(fc_feats, num_outputs=final_dim, activation_fn=None,
+                                                             scope='{}_final_gfc'.format(stage_idx))
+
+    return fc_final, cfeats, ops  # cfeats: [pn,fc_dims+gxyz_dim+feats_dim]
+
+
+def graph_conv_pool_edge_simp(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, voxel_size, block_size, reuse=False):
+    with tf.name_scope('base_graph_conv_edge_net'):
+        with tf.variable_scope('base_graph_conv_edge_net',reuse=reuse):
+            with tf.name_scope('conv_stage0'):
+                # 8 64 64*2
+                fc0, lf0, ops0 = graph_conv_pool_stage_edge_simp(0, xyzs, dxyzs, feats, tf.shape(feats)[1], radius=0.1,
+                                                                 reuse=reuse, voxel_size=voxel_size,
+                                                                 gxyz_dim=16, gc_dims=[16,16,16,16,16,16],
+                                                                 gfc_dims=[16,16,16], final_dim=128)
+                fc0_pool = graph_pool_stage(0, fc0, vlens, vbegs)
+
+            with tf.name_scope('conv_stage1'):
+                # 16 288 512*2
+                fc1, lf1, ops1 = graph_conv_pool_stage_edge_simp(1, pxyzs, pxyzs, fc0_pool, 128, radius=0.5,
+                                                                 reuse=reuse, voxel_size=block_size,
+                                                                 gxyz_dim=16, gc_dims=[32,32,32,32,32,32],
+                                                                 gfc_dims=[32,32,32], final_dim=512)
+                fc1_pool = tf.reduce_max(fc1, axis=0)
+
+            with tf.name_scope('unpool_stage1'):
+                upfeats1 = tf.tile(tf.expand_dims(fc1_pool, axis=0), [tf.shape(fc1)[0], 1])
+                upf1 = tf.concat([upfeats1, fc1, lf1], axis=1)
+
+            with tf.name_scope('unpool_stage0'):
+                upfeats0 = graph_unpool_stage(0, upf1, vlens, vbegs, vcens)
+                upf0 = tf.concat([upfeats0, fc0, lf0], axis=1)
+
+            lf = tf.concat([fc0, lf0], axis=1)
+
+            ops1=[graph_unpool_stage(1+idx, op, vlens, vbegs, vcens) for idx,op in enumerate(ops1)]
+            ops0+=ops1
+    # 1528 + 132
+    return upf0, lf, ops0
 
 
 def test_model():

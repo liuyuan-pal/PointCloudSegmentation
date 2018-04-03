@@ -4,7 +4,8 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model_pooling import graph_conv_pool_edge_new_v2,classifier_v3,points_pooling
+from model_pooling import graph_conv_pool_edge_new_v2,graph_conv_semantic_pool_v1,\
+    classifier_v3,points_pooling,class_pooling,classifier_v5
 from train_util import *
 from io_util import get_class_names,get_block_train_test_split,read_pkl
 from provider import Provider,default_unpack_feats_labels
@@ -25,11 +26,11 @@ parser.add_argument('--restore_epoch', type=int, default=0, help='')
 parser.add_argument('--restore_model', type=str, default='', help='')
 
 parser.add_argument('--log_step', type=int, default=120, help='')
-parser.add_argument('--train_dir', type=str, default='train/gpn_edge_new_v2', help='')
-parser.add_argument('--save_dir', type=str, default='model/gpn_edge_new_v2', help='')
-parser.add_argument('--log_file', type=str, default='gpn_edge_new_v2.log', help='')
-parser.add_argument('--use_root', type=bool, default=False, help='')
-parser.add_argument('--use_diffusion', type=bool, default=False, help='')
+parser.add_argument('--train_dir', type=str, default='train/gpn_edge_refine_v1', help='')
+parser.add_argument('--save_dir', type=str, default='model/gpn_edge_refine_v1', help='')
+parser.add_argument('--log_file', type=str, default='gpn_edge_refine_v1.log', help='')
+parser.add_argument('--base_restore', type=str, default='model/gpn_edge_new_v2/model30.ckpt', help='')
+parser.add_argument('--base_weight', type=float, default=1.0, help='')
 
 
 parser.add_argument('--eval',type=bool, default=False, help='')
@@ -45,19 +46,41 @@ def tower_loss(xyzs, feats, labels, is_training, reuse=False,):
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         xyzs, pxyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
             points_pooling(xyzs,feats,labels,voxel_size=0.3,block_size=3.0)
-        global_feats,local_feats=graph_conv_pool_edge_new_v2(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, reuse)
+        global_feats,local_feats,_=graph_conv_pool_edge_new_v2(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens,
+                                                               voxel_size=0.75, block_size=3.0,reuse=reuse)
 
-        global_feats=tf.expand_dims(global_feats,axis=0)
-        local_feats=tf.expand_dims(local_feats,axis=0)
-        logits=classifier_v3(global_feats, local_feats, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
+        global_feats_exp=tf.expand_dims(global_feats,axis=0)
+        local_feats_exp=tf.expand_dims(local_feats,axis=0)
+        logits=classifier_v3(global_feats_exp, local_feats_exp, tf.Variable(False,False,dtype=tf.bool),
+                             FLAGS.num_classes, reuse, use_bn=False)
 
-        # diffuse
         flatten_logits = tf.reshape(logits, [-1, FLAGS.num_classes])  # [pn,num_classes]
-
-        # loss
         labels_flatten=tf.reshape(labels,[-1,1])                  # [pn,1]
         labels_flatten=tf.squeeze(labels_flatten,axis=1)          # [pn]
-        loss=tf.losses.sparse_softmax_cross_entropy(labels_flatten,flatten_logits)
+        loss1=tf.losses.sparse_softmax_cross_entropy(labels_flatten,flatten_logits)
+
+        # refine
+        base_preds=tf.argmax(flatten_logits,axis=1)
+        xyzs, pxyzs, dxyzs, global_feats, labels, vlens, vbegs, vcens=\
+            class_pooling(xyzs,global_feats,base_preds,labels,voxel_size=0.75,block_size=3.0)
+        refine_feats,refine_local_feats=graph_conv_semantic_pool_v1(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens,
+                                                                    voxel_size=0.75, block_size=3.0, reuse=reuse)
+
+        refine_feats=tf.concat([refine_feats,global_feats],axis=1)
+        refine_feats=tf.expand_dims(refine_feats,axis=0)
+        local_feats=tf.concat([local_feats,refine_local_feats],axis=1)
+        local_feats_exp=tf.expand_dims(local_feats,axis=0)
+        logits=classifier_v5(refine_feats, local_feats_exp, is_training,
+                             FLAGS.num_classes, reuse, use_bn=False, name='refine_classifier')
+
+        # loss
+        flatten_logits = tf.reshape(logits, [-1, FLAGS.num_classes])  # [pn,num_classes]
+        labels_flatten=tf.reshape(labels,[-1,1])                  # [pn,1]
+        labels_flatten=tf.squeeze(labels_flatten,axis=1)          # [pn]
+        loss2=tf.losses.sparse_softmax_cross_entropy(labels_flatten,flatten_logits)
+
+        loss=loss1*FLAGS.base_weight+loss2
+        # loss=loss2
 
     tf.summary.scalar(loss.op.name,loss)
 
@@ -88,7 +111,9 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
                 with tf.name_scope('tower_{}'.format(i)):
                     loss,logits,label=tower_loss(xyzs[i], feats[i], labels[i], is_training, reuse)
 
-                    grad=opt.compute_gradients(loss)
+                    # refine_var = [var for var in tf.trainable_variables() if var.name.startswith('refine')]
+                    refine_var=tf.trainable_variables()
+                    grad=opt.compute_gradients(loss,refine_var)
                     tower_grads.append(grad)
                     tower_losses.append(loss)
                     tower_logits.append(logits)
@@ -248,6 +273,7 @@ def train():
         batch_num_per_epoch=2000/FLAGS.num_gpus
         ops=train_ops(pls['xyzs'],pls['feats'],pls['lbls'],pls['is_training'],batch_num_per_epoch)
 
+
         feed_dict={}
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
@@ -259,6 +285,10 @@ def train():
               saver.restore(sess,FLAGS.restore_model)
         else:
             sess.run(tf.global_variables_initializer())
+
+            base_var=[var for var in tf.trainable_variables() if var.name.startswith('base') or var.name.startswith('class_mlp')]
+            base_saver=tf.train.Saver(base_var)
+            base_saver.restore(sess,FLAGS.base_restore)
 
         summary_writer = tf.summary.FileWriter(FLAGS.train_dir,graph=sess.graph)
 

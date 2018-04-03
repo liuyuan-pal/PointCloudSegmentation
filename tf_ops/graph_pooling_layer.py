@@ -9,11 +9,13 @@ from graph_conv_layer import neighbor_ops
 from tensorflow.python.framework import ops
 
 @ops.RegisterGradient("PermutateFeature")
-def _neighbor_scatter_gradient(op,dpemutated_feature):
-    print 'here'
-    dfeats=pooling_ops.neighbor_gather(dpemutated_feature, op.inputs[1])
+def _permutate_feature_gradient(op,dpemutated_feature):
+    dfeats=pooling_ops.permutate_feature_backward(dpemutated_feature, op.inputs[2])
     return [dfeats,None,None]
 
+@ops.RegisterGradient("ComputeDiffXyz")
+def _compute_diff_xyz_gradient(op,ddxyz):
+    return [None,None,None]
 
 def search_neighborhood(xyzs,radius):
     idxs,lens,begs,cens=pooling_ops.search_neighborhood_brute_force(xyzs,squared_nn_size=radius*radius)
@@ -53,6 +55,7 @@ def class_pooling(xyzs,feats,classes,labels,voxel_size=0.2,block_size=3.0):
     voxel_idxs=pooling_ops.compute_voxel_index(xyzs,voxel_len=voxel_size,block_size=block_size)
 
     # permutation info
+    classes=tf.cast(classes,tf.int32)
     origin2permutation_idxs,permutation2origin_idxs,voxel_idxs_lens,voxel_idxs_begs,voxel_idxs_cens\
         =pooling_ops.compute_permutation_info_with_class(voxel_idxs,classes)
 
@@ -61,6 +64,7 @@ def class_pooling(xyzs,feats,classes,labels,voxel_size=0.2,block_size=3.0):
     permutated_feats=pooling_ops.permutate_feature(feats,origin2permutation_idxs,permutation2origin_idxs)
 
     labels=tf.expand_dims(labels,axis=1)
+    labels=tf.cast(labels,tf.int32)
     permutated_labels=pooling_ops.permutate_feature(labels,origin2permutation_idxs,permutation2origin_idxs)
     permutated_labels=tf.squeeze(permutated_labels,axis=1)
     permutated_labels=tf.cast(permutated_labels,tf.int64)
@@ -74,4 +78,7 @@ def class_pooling(xyzs,feats,classes,labels,voxel_size=0.2,block_size=3.0):
 
     return permutated_pts,center_pts,diff_pts,permutated_feats,\
            permutated_labels,voxel_idxs_lens,voxel_idxs_begs,voxel_idxs_cens
+
+def permutate_feats(feats,o2p,p2o):
+    return pooling_ops.permutate_feature(feats,o2p,p2o)
 

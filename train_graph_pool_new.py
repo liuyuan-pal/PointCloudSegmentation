@@ -4,7 +4,7 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model_pooling import graph_conv_pool_edge_new_v2,classifier_v3,points_pooling
+from model_pooling import graph_conv_pool_edge_simp,classifier_v3,points_pooling
 from train_util import *
 from io_util import get_class_names,get_block_train_test_split,read_pkl
 from provider import Provider,default_unpack_feats_labels
@@ -25,9 +25,9 @@ parser.add_argument('--restore_epoch', type=int, default=0, help='')
 parser.add_argument('--restore_model', type=str, default='', help='')
 
 parser.add_argument('--log_step', type=int, default=120, help='')
-parser.add_argument('--train_dir', type=str, default='train/gpn_edge_new_v2', help='')
-parser.add_argument('--save_dir', type=str, default='model/gpn_edge_new_v2', help='')
-parser.add_argument('--log_file', type=str, default='gpn_edge_new_v2.log', help='')
+parser.add_argument('--train_dir', type=str, default='train/gpn_edge_simp', help='')
+parser.add_argument('--save_dir', type=str, default='model/gpn_edge_simp', help='')
+parser.add_argument('--log_file', type=str, default='gpn_edge_simp.log', help='')
 parser.add_argument('--use_root', type=bool, default=False, help='')
 parser.add_argument('--use_diffusion', type=bool, default=False, help='')
 
@@ -45,7 +45,7 @@ def tower_loss(xyzs, feats, labels, is_training, reuse=False,):
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         xyzs, pxyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
             points_pooling(xyzs,feats,labels,voxel_size=0.3,block_size=3.0)
-        global_feats,local_feats=graph_conv_pool_edge_new_v2(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, reuse)
+        global_feats,local_feats,_=graph_conv_pool_edge_simp(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, 0.3, 3.0, reuse)
 
         global_feats=tf.expand_dims(global_feats,axis=0)
         local_feats=tf.expand_dims(local_feats,axis=0)

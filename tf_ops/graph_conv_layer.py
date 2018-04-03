@@ -617,4 +617,102 @@ def graph_conv_edge_xyz(sxyzs,ifn,fc_dims,ofn,nidxs,nidxs_lens,nidxs_bgs,cidxs,n
 
         return feats
 
+def graph_conv_edge_xyz_v2(sxyzs,ifn,fc_dims,ofn,nidxs,nidxs_lens,nidxs_bgs,cidxs,name='feats_sum',reuse=None,activation_fn=tf.nn.relu):
+    with tf.name_scope(name):
+        sfeats=sxyzs
+        dim_sum=3
+        for idx,fd in enumerate(fc_dims):
+            cfeats=tf.contrib.layers.fully_connected(sfeats, num_outputs=fd, scope='{}_fc_{}'.format(name,idx),
+                                                     activation_fn=tf.nn.relu, reuse=reuse)
+            sfeats=tf.concat([cfeats,sfeats],axis=1)
+            dim_sum+=fd
 
+        ew=tf.contrib.layers.fully_connected(sfeats, num_outputs=dim_sum*ofn, scope='{}_fc_ew'.format(name),
+                                             activation_fn=None, reuse=reuse)
+
+        ew=tf.reshape(ew,[-1,dim_sum,ofn])
+        sfeats=tf.expand_dims(sfeats,axis=1)
+        feats=tf.squeeze(tf.matmul(sfeats,ew),axis=1)                                                 # [en,ofn]
+        weights_inv=tf.expand_dims(1.0/tf.cast(nidxs_lens,tf.float32),axis=1)                         # [pn]
+        feats=weights_inv*neighbor_ops.neighbor_sum_feat_gather(feats, cidxs, nidxs_lens, nidxs_bgs)  # [pn,ofn]
+
+        with tf.variable_scope(name,reuse=reuse):
+            bias=_variable_on_cpu('{}_bias'.format(name),[ofn],tf.zeros_initializer())
+
+        feats=tf.nn.bias_add(feats,bias)
+
+        if activation_fn is not None:
+            feats=activation_fn(feats)
+
+        return feats
+
+
+def graph_conv_edge_simp(sxyzs, feats, ifn, ifc_dims, ofc_dims, ofn, nidxs, nidxs_lens, nidxs_bgs, cidxs, name, reuse=None):
+    with tf.name_scope(name):
+        sfeats = neighbor_ops.neighbor_scatter(feats, nidxs, nidxs_lens, nidxs_bgs, use_diff=True)  # [en,ifn]
+        sfeats = tf.concat([sfeats,sxyzs],axis=1)
+
+        for idx,fd in enumerate(ifc_dims):
+            cfeats=tf.contrib.layers.fully_connected(sfeats, num_outputs=fd, scope='{}_ifc_{}'.format(name,idx),
+                                                     activation_fn=tf.nn.relu, reuse=reuse)
+            sfeats=tf.concat([cfeats,sfeats],axis=1)
+
+        ew=tf.contrib.layers.fully_connected(sfeats, num_outputs=ifn, scope='{}_fc_ew'.format(name),
+                                             activation_fn=None, reuse=reuse)
+
+        feats=neighbor_ops.neighbor_scatter(feats, nidxs, nidxs_lens, nidxs_bgs, use_diff=False)      # [en,ifn]
+        feats=ew*feats
+        for idx,fd in enumerate(ofc_dims):
+            cfeats=tf.contrib.layers.fully_connected(feats, num_outputs=fd, scope='{}_ofc_{}'.format(name,idx),
+                                                     activation_fn=tf.nn.relu, reuse=reuse)
+            feats=tf.concat([cfeats,feats],axis=1)
+
+        weights_inv=tf.expand_dims(1.0/tf.cast(nidxs_lens,tf.float32),axis=1)                         # [pn]
+        feats=weights_inv*neighbor_ops.neighbor_sum_feat_gather(feats, cidxs, nidxs_lens, nidxs_bgs)  # [pn,ofn]
+        feats=tf.contrib.layers.fully_connected(feats, num_outputs=ofn, scope='{}_fc_out'.format(name),
+                                                activation_fn=tf.nn.relu, reuse=reuse)
+
+
+        return feats
+
+
+def graph_conv_edge_xyz_simp(sxyzs, ifn, ifc_dims, ofc_dims, ofn, nidxs, nidxs_lens, nidxs_bgs, cidxs, name, reuse=None):
+    with tf.name_scope(name):
+        sfeats=sxyzs
+        dim_sum=3
+        for idx,fd in enumerate(ifc_dims):
+            cfeats=tf.contrib.layers.fully_connected(sfeats, num_outputs=fd, scope='{}_ifc_{}'.format(name,idx),
+                                                     activation_fn=tf.nn.relu, reuse=reuse)
+            sfeats=tf.concat([cfeats,sfeats],axis=1)
+            dim_sum+=fd
+
+        ew=tf.contrib.layers.fully_connected(sfeats, num_outputs=dim_sum, scope='{}_fc_ew'.format(name),
+                                             activation_fn=None, reuse=reuse)
+
+        feats=ew*sxyzs                                                                               # [en,ifn]
+        # we need to embed the edge-conditioned feature to avoid signal mixed up
+        for idx,fd in enumerate(ofc_dims):
+            cfeats=tf.contrib.layers.fully_connected(feats, num_outputs=fd, scope='{}_ofc_{}'.format(name,idx),
+                                                     activation_fn=tf.nn.relu, reuse=reuse)
+            feats=tf.concat([cfeats,feats],axis=1)
+
+        weights_inv=tf.expand_dims(1.0/tf.cast(nidxs_lens,tf.float32),axis=1)                         # [pn]
+        feats=weights_inv*neighbor_ops.neighbor_sum_feat_gather(feats, cidxs, nidxs_lens, nidxs_bgs)  # [pn,ofn]
+
+        feats=tf.contrib.layers.fully_connected(feats, num_outputs=ofn, scope='{}_fc_out'.format(name),
+                                                activation_fn=tf.nn.relu, reuse=reuse)
+
+        # with tf.variable_scope(name,reuse=reuse):
+        #     bias=_variable_on_cpu('{}_bias'.format(name),[ofn],tf.zeros_initializer())
+        # feats=tf.nn.bias_add(feats,bias)
+        # if activation_fn is not None:
+        #     feats=activation_fn(feats)
+
+        return feats
+
+
+def graph_concat_scatter(feats, nidxs, nlens, nbegs, ncens):
+    scatter_feats1 = graph_unpool(feats, nlens, nbegs, ncens)
+    scatter_feats2 = graph_neighbor_scatter(feats, nidxs, nlens, nbegs)
+    scatter_feats = tf.concat([scatter_feats1, scatter_feats2], axis=1)
+    return scatter_feats
