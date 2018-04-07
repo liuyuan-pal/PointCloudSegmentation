@@ -45,4 +45,5 @@ void computeVoxelIdxImpl(
     computeVoxelIdxKernel<<<block_dim,thread_dim>>>(
            pts,voxel_idxs,pt_num,pt_stride,voxel_len,min_x,min_y,min_z
     );
+    gpuErrchk(cudaGetLastError())
 }

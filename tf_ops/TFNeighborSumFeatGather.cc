@@ -10,11 +10,11 @@
 using namespace tensorflow;
 
 REGISTER_OP("NeighborSumFeatGather")
-        .Input("feats: float32")   // [csum,fd]
-        .Input("cidxs: int32")      // [csum]
-        .Input("nidxs_lens: int32") // [pn]
-        .Input("nidxs_bgs: int32")  // [pn]
-        .Output("gfeats: float32")  // [pn,fd]
+        .Input("feats: float32")    // [pn1,fd]
+        .Input("cidxs: int32")      // [pn1]
+        .Input("nidxs_lens: int32") // [pn2]
+        .Input("nidxs_bgs: int32")  // [pn2]
+        .Output("gfeats: float32")  // [pn1,fd]
         .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
             ::tensorflow::shape_inference::ShapeHandle feats_shape;
             ::tensorflow::shape_inference::ShapeHandle cidxs_shape;

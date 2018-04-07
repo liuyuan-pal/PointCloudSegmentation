@@ -42,6 +42,7 @@ void permutateFeature(
     dim3 block_dim(bdim0,bdim1,bdim2);
     dim3 thread_dim(tdim0,tdim1,tdim2);
     permutateFeatureKernel <<<block_dim,thread_dim>>>(feats,idxs,permutated_feats,pn,ps);
+    gpuErrchk(cudaGetLastError())
 }
 
 

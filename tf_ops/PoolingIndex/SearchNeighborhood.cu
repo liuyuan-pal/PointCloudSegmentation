@@ -74,12 +74,22 @@ int searchNeighborhoodCountImpl(
     dim3 block_dim(block_num);
     dim3 thread_dim(1024);
     countNeighborNumKernel<<<block_dim,thread_dim>>>(xyzs,lens,squared_nn_size,pn);
+    gpuErrchk(cudaGetLastError())
 
     thrust::device_ptr<int> len_ptr(lens);
     thrust::device_ptr<int> beg_ptr(begs);
     thrust::exclusive_scan(len_ptr,len_ptr+pn,beg_ptr);
+    gpuErrchk(cudaGetLastError())
 
-    return *(beg_ptr+pn-1)+*(len_ptr+pn-1);
+    // todo: maybe error here?
+    int count1,count2;
+    gpuErrchk(cudaMemcpy(&count1,begs+pn-1,sizeof(int),cudaMemcpyDeviceToHost))
+    gpuErrchk(cudaMemcpy(&count2,lens+pn-1,sizeof(int),cudaMemcpyDeviceToHost))
+    gpuErrchk(cudaGetLastError())
+
+    return count1+count2;
+    // old version
+    // return *(len_ptr+pn-1)+*(beg_ptr+pn-1);
 }
 
 void searchNeighborhoodImpl(
@@ -96,6 +106,7 @@ void searchNeighborhoodImpl(
     dim3 block_dim(block_num);
     dim3 thread_dim(1024);
     computeNeighborIdxsKernel<<<block_dim,thread_dim>>>(xyzs,begs,idxs,cens,squared_nn_size,pn);
+    gpuErrchk(cudaGetLastError())
 }
 
 __global__

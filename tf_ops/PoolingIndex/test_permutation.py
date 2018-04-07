@@ -4,75 +4,88 @@ from test_util.draw_util import output_points
 
 ComputeVoxelIdxOp=tf.load_op_library('./ComputeVoxelIdxOp.so')
 ComputePermutationInfoOp=tf.load_op_library('./ComputePermutationInfoOp.so')
+ComputeRepermutationInfoOp=tf.load_op_library('./ComputeRepermutationInfoOp.so')
 PermutateFeatureOp=tf.load_op_library('./PermutateFeatureOp.so')
 neighbor_ops=tf.load_op_library('../build/libTFNeighborOps.so')
 ComputeDiffXYZOp=tf.load_op_library('./ComputeDiffXYZOp.so')
 
-pn=30000
 
-pts=np.random.uniform(-1.0,1.0,[pn,3])
-pts[:,2]-=np.min(pts[:,2])
+def eval_tf_permutation(pts,sess):
+    pts_pl=tf.placeholder(tf.float32,[None,3],'pts') # pn1
+    vidxs1=ComputeVoxelIdxOp.compute_voxel_index(pts_pl, voxel_len=0.3, block_size=2.0)
+    o2p_idxs1, p2o_idxs1, vlens1, vbegs1, vcens1=ComputePermutationInfoOp.compute_permutation_info(vidxs1)
+    pts1=PermutateFeatureOp.permutate_feature(pts_pl, o2p_idxs1, p2o_idxs1) # pn1
 
-pts_pl=tf.placeholder(tf.float32,[None,3],'pts')
-voxel_idxs=ComputeVoxelIdxOp.compute_voxel_index(pts_pl,voxel_len=0.3,block_size=2.0)
-origin2permutation_idxs,permutation2origin_idxs,voxel_idxs_lens,voxel_idxs_begs,voxel_idxs_cens\
-    =ComputePermutationInfoOp.compute_permutation_info(voxel_idxs)
-permutated_pts=PermutateFeatureOp.permutate_feature(pts_pl,origin2permutation_idxs,permutation2origin_idxs)
-repermutated_pts=PermutateFeatureOp.permutate_feature(permutated_pts,permutation2origin_idxs,origin2permutation_idxs)
+    pts2=neighbor_ops.neighbor_sum_feat_gather(pts1, vcens1, vlens1, vbegs1) # pn2
+    pts2= pts2 / tf.expand_dims(tf.cast(vlens1, tf.float32), axis=1)
+    dpts1=ComputeDiffXYZOp.compute_diff_xyz(pts1, pts2, vcens1)
 
-center_pts=neighbor_ops.neighbor_sum_feat_gather(permutated_pts,voxel_idxs_cens,voxel_idxs_lens,voxel_idxs_begs) # [vn,3]
-center_pts=center_pts/tf.expand_dims(tf.cast(voxel_idxs_lens,tf.float32),axis=1)
+    vidxs2=ComputeVoxelIdxOp.compute_voxel_index(pts2, voxel_len=0.75, block_size=2.0)
+    o2p_idxs2,p2o_idxs2,vlens2,vbegs2,vcens2=ComputePermutationInfoOp.compute_permutation_info(vidxs2)
+    pts2=PermutateFeatureOp.permutate_feature(pts2,o2p_idxs2,p2o_idxs2) # pn2
 
-diff_pts=ComputeDiffXYZOp.compute_diff_xyz(permutated_pts,center_pts,voxel_idxs_cens)
+    pts3=neighbor_ops.neighbor_sum_feat_gather(pts2, vcens2, vlens2, vbegs2) # pn2
+    pts3= pts3 / tf.expand_dims(tf.cast(vlens2, tf.float32), axis=1)
+    dpts2=ComputeDiffXYZOp.compute_diff_xyz(pts2, pts3, vcens2)
 
-with tf.Session() as sess:
-    vlens,vbegs,vcens,ppts,rppts,cpts,dpts=sess.run([
-        voxel_idxs_lens,voxel_idxs_begs,voxel_idxs_cens,
-        permutated_pts,repermutated_pts,center_pts,diff_pts],
+    reper_o2p_idxs1,reper_p2o_idxs1,vlens1,vbegs1,vcens1=\
+        ComputeRepermutationInfoOp.compute_repermutation_info(o2p_idxs2,vlens1,vbegs1,vcens1)
+    pts1=PermutateFeatureOp.permutate_feature(pts1,reper_o2p_idxs1,reper_p2o_idxs1)
+    dpts1=PermutateFeatureOp.permutate_feature(dpts1,reper_o2p_idxs1,reper_p2o_idxs1)
+
+    xyzs1,xyzs2,xyzs3,dxyzs1,dxyzs2,\
+        vl1,vb1,vc1,vl2,vb2,vc2=sess.run(
+        [pts1,pts2,pts3,dpts1,dpts2,
+         vlens1,vbegs1,vcens1,
+         vlens2,vbegs2,vcens2],
         feed_dict={pts_pl:pts})
 
-print vlens[:10]
-print vbegs[:10]
+    return xyzs1,xyzs2,xyzs3,dxyzs1,dxyzs2
 
-# test vlens permutate
-colors=np.random.randint(0,256,[len(vlens),3])
-pcolors=[]
-for c,l in zip(colors,vlens):
-    pcolors+=[c for _ in xrange(l)]
 
-pcolors=np.asarray(pcolors,np.int32)
-output_points('test_result/permutated_colors.txt',ppts,pcolors)
+def test_single():
+    pn=30000
 
-# test permutate back
-print 'reper max {} mean {} sum {}'.format(np.max(rppts-pts),np.mean(rppts-pts),np.sum(rppts-pts))
+    pts=np.random.uniform(-1.0,1.0,[pn,3])
+    pts[:,2]-=np.min(pts[:,2])
+    pts[:,2]=0
 
-# test begs
-cur_len=0
-for i in xrange(len(vlens)):
-    assert cur_len==vbegs[i]
-    cur_len+=vlens[i]
+    # assert cens lens begs
 
-# test cens
-print vcens[:10]
-print vcens[80:100]
+    def check_vidxs(lens,begs,cens):
+        pn2=lens.shape[0]
+        pn1=cens.shape[0]
 
-for i in xrange(len(vlens)):
-    for j in xrange(vlens[i]):
-        if vcens[vbegs[i]+j]!=i:
-            print i,vcens[vbegs[i]+j]
-            exit(0)
+        cur_len=0
+        for i in xrange(pn2):
+            assert cur_len==begs[i]
+            cur_len+=lens[i]
 
-# test cxyzs
-output_points('test_result/center_colors.txt',cpts,colors)
+        for i in xrange(pn2):
+            for j in xrange(lens[i]):
+                assert cens[begs[i]+j]==i
 
-# test dxyzs
-for i in xrange(len(vlens)):
-    bg=vbegs[i]
-    ed=bg+vlens[i]
-    dpts[bg:ed]+=cpts[i]
+    check_vidxs(vl1,vb1,vc1)
+    check_vidxs(vl2,vb2,vc2)
 
-print 'diff max {} mean {} sum {}'.format(np.max(dpts-ppts),np.mean(dpts-ppts),np.sum(dpts-ppts))
+    def output_hierarchy(pts1,pts2,cens,name):
+        colors=np.random.randint(0,256,[len(pts2),3])
+        output_points('test_result/{}_dense.txt'.format(name),pts1,colors[cens,:])
+        output_points('test_result/{}_sparse.txt'.format(name),pts2,colors)
 
+    output_hierarchy(xyzs1,xyzs2,vc1,'12')
+    output_hierarchy(xyzs2,xyzs3,vc2,'23')
+
+    def check_dxyzs(pts1,pts2,dpts1,vcens):
+        pn1=pts1.shape[0]
+        tmp_dpts1=np.copy(dpts1)
+        for i in xrange(pn1):
+            tmp_dpts1[i]+=pts2[vcens[i]]
+
+        print np.mean(np.abs(tmp_dpts1-pts1),axis=0),np.max(np.abs(tmp_dpts1-pts1),axis=0)
+
+    check_dxyzs(xyzs1,xyzs2,dxyzs1,vc1)
+    check_dxyzs(xyzs2,xyzs3,dxyzs2,vc2)
 
 
 

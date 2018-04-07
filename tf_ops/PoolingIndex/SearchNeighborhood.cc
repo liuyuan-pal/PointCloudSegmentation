@@ -144,7 +144,6 @@ public:
     }
     void Compute(OpKernelContext* context) override
     {
-        // fetch input tensor
         const Tensor& xyzs=context->input(0);       // [pn1,3]
         const Tensor& bin_idxs=context->input(1);       // [pn1,3]
 

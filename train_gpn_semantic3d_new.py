@@ -4,11 +4,12 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model_pooling import graph_conv_pool_edge_simp_2layers,classifier_v3,points_pooling_two_layers
+from model_pooling import points_pooling_two_layers,graph_conv_pool_edge_simp_2layers,classifier_v3
 from train_util import *
-from io_util import get_class_names,get_block_train_test_split,read_pkl
+from io_util import get_semantic3d_block_train_test_split,read_pkl,get_semantic3d_class_names,read_fn_hierarchy,save_pkl
 from provider import Provider,default_unpack_feats_labels
-from draw_util import output_points,get_class_colors
+from draw_util import output_points,get_semantic3d_class_colors
+from functools import partial
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--num_gpus', type=int, default=4, help='')
@@ -18,59 +19,53 @@ parser.add_argument('--lr_init', type=float, default=1e-3, help='')
 parser.add_argument('--lr_clip', type=float, default=1e-5, help='')
 parser.add_argument('--decay_rate', type=float, default=0.5, help='')
 parser.add_argument('--decay_epoch', type=int, default=50, help='')
-parser.add_argument('--num_classes', type=int, default=13, help='')
+parser.add_argument('--num_classes', type=int, default=9, help='')
 
 parser.add_argument('--restore',type=bool, default=False, help='')
 parser.add_argument('--restore_epoch', type=int, default=0, help='')
 parser.add_argument('--restore_model', type=str, default='', help='')
 
 parser.add_argument('--log_step', type=int, default=120, help='')
-parser.add_argument('--train_dir', type=str, default='train/gpn_edge_simp_v5', help='')
-parser.add_argument('--save_dir', type=str, default='model/gpn_edge_simp_v5', help='')
-parser.add_argument('--log_file', type=str, default='gpn_edge_simp_v5.log', help='')
-parser.add_argument('--use_root', type=bool, default=False, help='')
-parser.add_argument('--use_diffusion', type=bool, default=False, help='')
-parser.add_argument('--test_subset', type=bool, default=False, help='')
+parser.add_argument('--train_dir', type=str, default='train/semantic_edge_2layer', help='')
+parser.add_argument('--save_dir', type=str, default='model/semantic_edge_2layer', help='')
+parser.add_argument('--log_file', type=str, default='semantic_edge_2layer.log', help='')
 
 
 parser.add_argument('--eval',type=bool, default=False, help='')
 parser.add_argument('--eval_model',type=str, default='model/label/unsupervise80.ckpt',help='')
+parser.add_argument('--eval_output',type=bool, default=False,help='')
 
-parser.add_argument('--train_epoch_num', type=int, default=100, help='')
+parser.add_argument('--train_epoch_num', type=int, default=500, help='')
 
 FLAGS = parser.parse_args()
 
+# training set labels count
+# [ 69821678.  38039379.  52260419.  54975958.  10229433.  67044610.
+#    7620115.   3612462.   2362445.]
 
-train_weights=[2.80089331,2.92693353,2.94871211,5.12748384,5.07317114,
-               5.18505001,4.612535,4.83436918,4.1070838,5.36530066,4.64813137,
-               5.26789713,3.67803526]
-train_weights=np.asarray(train_weights)
 
-def tower_loss(xyzs, feats, labels, is_training, reuse=False):
+
+def tower_loss(xyzs, feats, labels, is_training,reuse=False):
+
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         xyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
-            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.15,voxel_size2=0.3,block_size=3.0)
-        global_feats,local_feats,_=graph_conv_pool_edge_simp_2layers(xyzs, dxyzs, feats, vlens, vbegs, vcens, [0.15,0.3], 3.0,
-                                                                     [0.15,0.3,0.5], reuse)
+            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.6,voxel_size2=1.8,block_size=20.0)
+        global_feats,local_feats,_=graph_conv_pool_edge_simp_2layers(xyzs, dxyzs, feats, vlens, vbegs, vcens,
+                                                                     [0.6, 1.8], 20.0, [0.4,1.2,3.6], reuse)
 
-        global_feats=tf.expand_dims(global_feats,axis=0)
-        local_feats=tf.expand_dims(local_feats,axis=0)
-        logits=classifier_v3(global_feats, local_feats, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
+        global_feats_exp=tf.expand_dims(global_feats,axis=0)
+        local_feats_exp=tf.expand_dims(local_feats,axis=0)
+        logits=classifier_v3(global_feats_exp, local_feats_exp, is_training,
+                             FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
 
-        # diffuse
-        flatten_logits = tf.reshape(logits, [-1, FLAGS.num_classes])  # [pn,num_classes]
-
-        # loss
-        labels_flatten=tf.reshape(labels,[-1,1])                  # [pn,1]
-        labels_flatten=tf.squeeze(labels_flatten,axis=1)          # [pn]
-        train_weights_tf=tf.Variable(train_weights,trainable=False,name='train_weights')
-        weights=tf.gather(train_weights_tf,labels_flatten)
-        loss=tf.losses.sparse_softmax_cross_entropy(labels_flatten,flatten_logits,weights=weights)
-        # loss=tf.losses.sparse_softmax_cross_entropy(labels_flatten,flatten_logits)
-
+    flatten_logits=tf.reshape(logits,[-1,FLAGS.num_classes])  # [pn,num_classes]
+    labels_flatten=tf.reshape(labels,[-1,1])                  # [pn,1]
+    labels_flatten=tf.squeeze(labels_flatten,axis=1)          # [pn]
+    weights=tf.cast(tf.not_equal(labels_flatten,0),tf.float32)# label 0 is unknown
+    loss=tf.losses.sparse_softmax_cross_entropy(labels_flatten,flatten_logits,weights=weights)
     tf.summary.scalar(loss.op.name,loss)
 
-    return loss,flatten_logits,labels
+    return loss,flatten_logits,labels_flatten,global_feats
 
 
 def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
@@ -92,16 +87,18 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
         tower_losses=[]
         tower_logits=[]
         tower_labels=[]
+        tower_feats=[]
         for i in range(FLAGS.num_gpus):
             with tf.device('/gpu:{}'.format(i)):
                 with tf.name_scope('tower_{}'.format(i)):
-                    loss,logits,label=tower_loss(xyzs[i], feats[i], labels[i], is_training, reuse)
+                    loss,logits,label,global_feats=tower_loss(xyzs[i], feats[i], labels[i], is_training, reuse)
 
                     grad=opt.compute_gradients(loss)
                     tower_grads.append(grad)
                     tower_losses.append(loss)
                     tower_logits.append(logits)
                     tower_labels.append(label)
+                    tower_feats.append(global_feats)
                     update_op = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
                     summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
                     reuse=True
@@ -114,6 +111,7 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
 
         total_loss_op=tf.add_n(tower_losses)/FLAGS.num_gpus
         tower_labels=tf.concat(tower_labels,axis=0)
+        tower_feats=tf.concat(tower_feats,axis=0)
 
         logits_op=tf.concat(tower_logits,axis=0)
         preds_op=tf.argmax(logits_op,axis=1)
@@ -127,8 +125,28 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
         ops['summary']=summary_op
         ops['global_step']=global_step
         ops['labels']=tower_labels
+        ops['feats']=tower_feats
 
     return ops
+
+
+def fill_feed_dict(feed_in,feed_dict,pls,num_gpus):
+    xyzs, rgbs, covars, lbls = default_unpack_feats_labels(feed_in, num_gpus)
+
+    cur_data=xyzs, rgbs, covars, lbls
+    save_pkl('cur_data.pkl',cur_data)
+    xyzs, rgbs, covars, lbls =read_pkl('cur_data.pkl')
+
+    batch_pt_num=0
+    for k in xrange(num_gpus):
+        feed_dict[pls['xyzs'][k]]=xyzs[k]
+        feats=np.concatenate([rgbs[k],covars[k]],axis=1)
+        feed_dict[pls['feats'][k]]=feats
+        feed_dict[pls['lbls'][k]]=lbls[k]
+
+        batch_pt_num += lbls[k].shape[0]
+
+    return batch_pt_num
 
 
 def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
@@ -136,29 +154,21 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
     total_correct,total_block,total_points=0,0,0
     begin_time=time.time()
     total_losses=[]
-
-    from tensorflow.python.client import timeline
-
     for i,feed_in in enumerate(trainset):
-        batch_pt_num,_,_=fill_feed_dict(feed_in,feed_dict,pls,FLAGS.num_gpus)
+        batch_pt_num=fill_feed_dict(feed_in,feed_dict,pls,FLAGS.num_gpus)
 
         feed_dict[pls['is_training']]=True
         total_block+=FLAGS.num_gpus
-        total_points+=batch_pt_num
 
-        # options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        # run_metadata = tf.RunMetadata()
-        _,loss_val,correct_num=sess.run([ops['apply_grad'],ops['total_loss'],ops['correct_num']],feed_dict)
-                                        # options=options, run_metadata=run_metadata)
-        # fetched_timeline = timeline.Timeline(run_metadata.step_stats)
-        # chrome_trace = fetched_timeline.generate_chrome_trace_format()
-        # with open('timeline.json', 'w') as f:
-        #     f.write(chrome_trace)
-
-        # if i>20: raise IndexError
-
+        _,loss_val,logits,batch_labels=\
+            sess.run([ops['apply_grad'],ops['total_loss'],ops['logits'],ops['labels']],feed_dict)
         total_losses.append(loss_val)
-        total_correct+=correct_num
+        preds=np.argmax(logits[:,1:],axis=1)+1
+        total_correct+=np.sum((batch_labels!=0)&(batch_labels==preds))
+        total_points+=batch_pt_num-np.sum(batch_labels==0)
+        # print np.mean(feats,axis=0)
+        # exit(0)
+
         if i % FLAGS.log_step==0:
             summary,global_step=sess.run(
                 [ops['summary'],ops['global_step']],feed_dict)
@@ -174,6 +184,11 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
             begin_time=time.time()
             total_losses=[]
 
+        # the generated training set is too large
+        # so every 12000 examples we test once and save the model
+        if i>3000:
+            break
+
     log_str('epoch {} cost {} s'.format(epoch_num, time.time()-epoch_begin), FLAGS.log_file)
 
 
@@ -183,20 +198,23 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer
     all_preds,all_labels=[],[]
     for i,feed_in in enumerate(testset):
         fill_feed_dict(feed_in,feed_dict,pls,FLAGS.num_gpus)
+
         feed_dict[pls['is_training']] = False
 
-        loss,batch_labels,preds=sess.run([ops['total_loss'],ops['labels'],ops['preds']],feed_dict)
+        loss,logits,batch_labels=sess.run([ops['total_loss'],ops['logits'],ops['labels']],feed_dict)
+        all_labels.append(batch_labels)
+        preds=np.argmax(logits[:,1:],axis=1)+1
         test_loss.append(loss)
         all_preds.append(preds)
-        all_labels.append(batch_labels)
 
     all_preds=np.concatenate(all_preds,axis=0)
     all_labels=np.concatenate(all_labels,axis=0)
+    mask=all_labels!=0
+    all_preds=all_preds[mask]
+    all_labels=all_labels[mask]
+    iou, miou, oiou, acc, macc, oacc = compute_iou(all_labels-1,all_preds-1,8)
 
     test_loss=np.mean(np.asarray(test_loss))
-
-    iou, miou, oiou, acc, macc, oacc = compute_iou(all_labels,all_preds)
-
     log_str('mean iou {:.5} overall iou {:5} loss {:5} \n mean acc {:5} overall acc {:5} cost {:3} s'.format(
         miou, oiou, test_loss, macc, oacc, time.time()-begin_time
     ),FLAGS.log_file)
@@ -205,65 +223,36 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer
         checkpoint_path = os.path.join(FLAGS.save_dir, 'model{}.ckpt'.format(epoch_num))
         saver.save(sess,checkpoint_path)
     else:
-        names=get_class_names()
+        names=get_semantic3d_class_names()[1:]
         for i in xrange(len(names)):
             print '{} iou {} acc {}'.format(names[i],iou[i],acc[i])
 
 
-def fill_feed_dict(feed_in,feed_dict,pls,num_gpus):
-    cxyzs, rgbs, covars, lbls, block_mins = default_unpack_feats_labels(feed_in, num_gpus)
-    # 0 2 3 4 12
-    batch_pt_num=0
-    batch_labels=[]
-    for k in xrange(num_gpus):
-        feed_dict[pls['xyzs'][k]]=cxyzs[k][0]
-        feats=np.concatenate([rgbs[k],covars[k]],axis=1)
-        feed_dict[pls['feats'][k]]=feats
-        feed_dict[pls['lbls'][k]]=lbls[k]
-
-        batch_pt_num += lbls[k].shape[0]
-        batch_labels.append(lbls[k])
-
-    return batch_pt_num,batch_labels,block_mins
-
-
 def build_placeholder(num_gpus):
     pls = {}
-    pls['xyzs'], pls['feats'], pls['lbls']=[],[],[]
+    pls['xyzs'], pls['feats'], pls['lbls'],pls['weights']=[],[],[],[]
     for i in xrange(num_gpus):
         pls['xyzs'].append(tf.placeholder(tf.float32,[None,3],'xyzs{}'.format(i)))
-        pls['feats'].append(tf.placeholder(tf.float32,[None,12],'feats{}'.format(i)))
+        pls['feats'].append(tf.placeholder(tf.float32,[None,13],'feats{}'.format(i)))
         pls['lbls'].append(tf.placeholder(tf.int32,[None],'lbls{}'.format(i)))
+        pls['weights'].append(tf.placeholder(tf.float32,[None],'weights{}'.format(i)))
 
     pls['is_training'] = tf.placeholder(tf.bool, name='is_training')
     return pls
 
 
 def train():
-    import random
-    train_list,test_list=get_block_train_test_split()
-    if not FLAGS.test_subset:
-        # test_list=['data/S3DIS/sampled_train/'+fn for fn in train_list[:2]]
-        train_list=['data/S3DIS/sampled_train/'+fn for fn in train_list]
-        random.shuffle(train_list)
-        test_list=['data/S3DIS/sampled_test/'+fn for fn in test_list]
-    else:
-        train_list = [fs for fs in train_list if fs.split('_')[3] == 'office']
-        test_list = [fs for fs in test_list if fs.split('_')[3] == 'office']
-        train_list = ['data/S3DIS/sampled_train/' + fn for fn in train_list[:20]]
-        test_list = ['data/S3DIS/sampled_test/' + fn for fn in test_list]
-        random.shuffle(train_list)
-
-    def fn(model,filename):
-        data=read_pkl(filename)
-        return data[0],data[2],data[3],data[4],data[12]
-
-    train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,fn)
-    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,fn)
+    train_list,test_list=get_semantic3d_block_train_test_split()
+    train_list=['data/Semantic3D.Net/block/sampled/merged/'+fn for fn in train_list]
+    test_list=['data/Semantic3D.Net/block/sampled/merged/'+fn for fn in test_list]
+    read_fn=lambda model,filename: read_pkl(filename)
+    train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
+    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
 
     try:
         pls=build_placeholder(FLAGS.num_gpus)
-        batch_num_per_epoch=2000/FLAGS.num_gpus
+
+        batch_num_per_epoch=5000/FLAGS.num_gpus
         ops=train_ops(pls['xyzs'],pls['feats'],pls['lbls'],pls['is_training'],batch_num_per_epoch)
 
         feed_dict={}
@@ -290,17 +279,15 @@ def train():
 
 
 def eval():
-    train_list,test_list=get_block_train_test_split()
-    test_list=['data/S3DIS/sampled_test/'+fn for fn in test_list]
+    train_list,test_list=get_semantic3d_block_train_test_split()
+    test_list=['data/Semantic3D.Net/block/sampled/test/'+fn for fn in test_list]
+    read_fn=lambda model,filename: read_pkl(filename)
 
-    def fn(model,filename):
-        data=read_pkl(filename)
-        return data[0],data[2],data[3],data[4],data[12]
-
-    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,fn)
+    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
 
     try:
         pls=build_placeholder(FLAGS.num_gpus)
+
         batch_num_per_epoch=2000/FLAGS.num_gpus
         ops=train_ops(pls['xyzs'],pls['feats'],pls['lbls'],pls['is_training'],batch_num_per_epoch)
 

@@ -6,6 +6,10 @@
 #include <tensorflow/core/framework/shape_inference.h>
 #include <tensorflow/core/framework/op_kernel.h>
 #include <initializer_list>
+//#include <log4cpp/Category.hh>
+//#include <log4cpp/FileAppender.hh>
+//#include <log4cpp/BasicLayout.hh>
+//#include <log4cpp/Priority.hh>
 
 using namespace tensorflow;
 
@@ -48,7 +52,6 @@ public:
     }
     void Compute(OpKernelContext* context) override
     {
-        // fetch input tensor
         const Tensor& pts=context->input(0);      // [pn1,fd]
 
         unsigned int pn=pts.dim_size(0);
@@ -60,7 +63,8 @@ public:
 
         auto pts_data= const_cast<float*>(pts.shaped<float,2>({pn,3}).data());
         auto voxel_idxs_data=reinterpret_cast<unsigned int*>(voxel_idxs->shaped<int,2>({pn,3}).data());
-        computeVoxelIdxImpl(pts_data,voxel_idxs_data,pn,3,voxel_len,-block_size/2.f,-block_size/2.f,0.f);
+        float eps=1e-3;
+        computeVoxelIdxImpl(pts_data,voxel_idxs_data,pn,3,voxel_len,-block_size/2.f-eps,-block_size/2.f-eps,0.f-eps);
     }
 };
 

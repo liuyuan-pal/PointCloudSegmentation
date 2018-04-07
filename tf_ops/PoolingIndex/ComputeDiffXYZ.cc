@@ -9,7 +9,7 @@
 
 using namespace tensorflow;
 
-void permutateFeatureImpl(
+void computeDiffXYZImpl(
         float * xyzs,               // [pn1,3]
         float *cxyzs,               // [pn2,3]
         float *dxyzs,               // [pn1,3]
@@ -45,9 +45,9 @@ public:
     void Compute(OpKernelContext* context) override
     {
         // fetch input tensor
-        const Tensor& xyzs=context->input(0);       // [pn1,fd]
-        const Tensor& cxyzs=context->input(1);      // [pn1,fd]
-        const Tensor& cidxs=context->input(2);      // [pn1,fd]
+        const Tensor& xyzs=context->input(0);       // [pn1,3]
+        const Tensor& cxyzs=context->input(1);      // [pn2,3]
+        const Tensor& cidxs=context->input(2);      // [pn1]
 
         unsigned int pn1=xyzs.dim_size(0),
                      pn2=cxyzs.dim_size(0);
@@ -64,7 +64,7 @@ public:
         auto cidxs_data=const_cast<int*>(cidxs.shaped<int,1>({pn1}).data());
         auto dxyzs_data=reinterpret_cast<float*>(dxyzs->shaped<float,2>({pn1,3}).data());
 
-        permutateFeatureImpl(xyzs_data,cxyzs_data,dxyzs_data,cidxs_data,pn1,pn2);
+        computeDiffXYZImpl(xyzs_data,cxyzs_data,dxyzs_data,cidxs_data,pn1,pn2);
     }
 };
 

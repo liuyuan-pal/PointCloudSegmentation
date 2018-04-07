@@ -30,7 +30,7 @@ def test_permutate_np():
     abs_diff=np.abs(dfeats_eval-dfeats)
     print 'diff {}'.format(np.mean(abs_diff),np.max(abs_diff))
 
-def eval_permutate(feats,dpfeats,o2p,p2o):
+def eval_permutate(feats,dpfeats,o2p,p2o,sess):
     feats_pl=tf.placeholder(tf.float32,[None,None])
     o2p_pl=tf.placeholder(tf.int32,[None])
     p2o_pl=tf.placeholder(tf.int32,[None])
@@ -39,19 +39,17 @@ def eval_permutate(feats,dpfeats,o2p,p2o):
     pfeats=permutate_feats(feats_pl,o2p_pl,p2o_pl)
     dfeats=tf.gradients(pfeats,feats_pl,dpfeats_pl)
 
-    with tf.Session() as sess:
-        dfeats_val,pfeats_val=sess.run([dfeats,pfeats],feed_dict={
-            feats_pl:feats,
-            o2p_pl:o2p,
-            p2o_pl:p2o,
-            dpfeats_pl:dpfeats,
-        })
+    dfeats_val,pfeats_val=sess.run([dfeats,pfeats],feed_dict={
+        feats_pl:feats,
+        o2p_pl:o2p,
+        p2o_pl:p2o,
+        dpfeats_pl:dpfeats,
+    })
 
     return dfeats_val,pfeats_val
 
 
-def test_tf():
-    pn,fd=100,32
+def test_single(pn,fd,sess):
     o2p=np.arange(pn)
     np.random.shuffle(o2p)
     p2o=np.empty_like(o2p)
@@ -61,20 +59,55 @@ def test_tf():
     pfeats=permutate_forward(feats,o2p)
     dpfeats=np.random.uniform(-1,1,[pn,fd])
     dfeats=permutate_forward(dpfeats,p2o)
-    dfeats_tf, pfeats_tf = eval_permutate(feats, dpfeats, o2p, p2o)
+    dfeats_tf, pfeats_tf = eval_permutate(feats, dpfeats, o2p, p2o,sess)
 
-    f=lambda feats:permutate_forward(feats,o2p)
-    dfeats_eval=eval_numerical_gradient_array(f,feats,dpfeats)
+    # f=lambda feats:permutate_forward(feats,o2p)
+    # dfeats_eval=eval_numerical_gradient_array(f,feats,dpfeats)
+    # abs_diff=np.abs(dfeats_eval-dfeats)
+    # print 'diff {} {}'.format(np.mean(abs_diff),np.max(abs_diff))
 
-
-
-    abs_diff=np.abs(dfeats_eval-dfeats)
-    print 'diff {} {}'.format(np.mean(abs_diff),np.max(abs_diff))
     abs_diff=np.abs(dfeats_tf-dfeats)
-    print 'diff {} {}'.format(np.mean(abs_diff),np.max(abs_diff))
+    if np.mean(abs_diff) > 1e-5 or np.max(abs_diff) > 1e-4:
+        print 'error!'
+        print pn, fd
+        exit(0)
+
     abs_diff=np.abs(pfeats_tf-pfeats)
-    print 'diff {} {}'.format(np.mean(abs_diff), np.max(abs_diff))
+    if np.mean(abs_diff) > 1e-5 or np.max(abs_diff) > 1e-4:
+        print 'error!'
+        print pn, fd
+        exit(0)
+
+
+def test():
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    config.allow_soft_placement = True
+    config.log_device_placement = False
+    sess=tf.Session(config=config)
+
+    for _ in xrange(100):
+        pn=np.random.randint(30,1030)
+        fd=np.random.randint(30,1030)
+        test_single(pn,fd,sess)
+
+    for _ in xrange(100):
+        pn=np.random.randint(1020,1030)
+        fd=np.random.randint(100,200)
+        test_single(pn,fd,sess)
+
+    for _ in xrange(100):
+        pn=np.random.randint(100,200)
+        fd=np.random.randint(1020,1030)
+        test_single(pn,fd,sess)
+
+    for i in xrange(10):
+        pn=np.random.randint(5120,10240)
+        fd=np.random.randint(50,100)
+        test_single(pn,fd,sess)
+
+
 
 
 if __name__=="__main__":
-    test_tf()
+    test()

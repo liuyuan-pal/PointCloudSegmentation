@@ -63,8 +63,12 @@ class Provider(threading.Thread):
         self.batch_size = batch_size
         self.done = False
 
+        if self.model == 'train':
+            random.shuffle(self.indices)
+
         self.start()
         self.cur_data=None
+
 
     def run(self):
         model = self.model

@@ -1,7 +1,7 @@
 #include "../TFCudaCommon.h"
 
 __global__
-void permutateFeatureKernel(
+void computeDiffXYZKernel(
         float * xyzs,               // [pn1,3]
         float *cxyzs,               // [pn2,3]
         float *dxyzs,               // [pn1,3]
@@ -19,7 +19,7 @@ void permutateFeatureKernel(
 }
 
 
-void permutateFeatureImpl(
+void computeDiffXYZImpl(
         float * xyzs,               // [pn1,3]
         float *cxyzs,               // [pn2,3]
         float *dxyzs,               // [pn1,3]
@@ -33,5 +33,6 @@ void permutateFeatureImpl(
     dim3 block_dim(block_num);
     dim3 thread_dim(1024);
 
-    permutateFeatureKernel<<<block_dim,thread_dim>>>(xyzs,cxyzs,dxyzs,cidxs,pn1,pn2);
+    computeDiffXYZKernel<<<block_dim,thread_dim>>>(xyzs,cxyzs,dxyzs,cidxs,pn1,pn2);
+    gpuErrchk(cudaGetLastError())
 }

@@ -23,14 +23,8 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 
 inline int infTwoExp(int val)
 {
-    int cval=val;
     int inf=1;
-    while(cval>1)
-    {
-        cval>>=1;
-        inf<<=1;
-    }
-    if(val>inf) inf<<=1;
+    while(val>inf) inf<<=1;
     return inf;
 }
 

@@ -54,4 +54,5 @@ g++ -std=c++11 -shared build/TFNeighborKernel.cu.o build/TFNeighborKernelNew.cu.
          ${tf_files} -o build/libTFNeighborOps.so \
          -fPIC -I$TF_INC -I$TF_INC/external/nsync/public \
          -L$TF_LIB -ltensorflow_framework \
+         -L/usr/local/cuda/lib64 -lcudart \
          -D_GLIBCXX_USE_CXX11_ABI=0 -O2

@@ -51,7 +51,7 @@ def graph_conv_model(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, reuse=False
                 # 8 64 64*2
                 fc0, lf0, ops1 = graph_conv_pool_stage_cluster(0,xyzs,dxyzs,feats,tf.shape(feats)[1],radius=0.1,reuse=reuse,
                                                                gxyz_dim=8,gc_dims=[16,16,16,16],gfc_dims=[64,64,64],final_dim=64)
-                fc0_pool = graph_pool_stage(0, fc0, vlens, vbegs)
+                fc0_pool = graph_max_pool_stage(0, fc0, vlens, vbegs)
 
             with tf.name_scope('conv_stage1'):
                 # 16 288 512*2

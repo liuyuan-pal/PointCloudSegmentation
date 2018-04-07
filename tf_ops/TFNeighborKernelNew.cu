@@ -134,8 +134,12 @@ __global__ void maxFeatGather(
     FLT_TYPE *feats_max_p=&feats_max[pi*fd+fi];
     INT_TYPE *max_idxs_p=&max_idxs[pi*fd+fi];
     FLT_TYPE *ifeats_p=&ifeats[bg*fd+fi];
-    (*feats_max_p)=-FLT_MAX;
-    for(int ni=0;ni<nn;ni++)
+    if(nn==0) return;
+
+    (*feats_max_p)=*ifeats_p;
+    (*max_idxs_p)=0;
+    ifeats_p+=fd;
+    for(int ni=1;ni<nn;ni++)
     {
         FLT_TYPE cur_val=*ifeats_p;
         if((*feats_max_p)<cur_val)
@@ -196,6 +200,7 @@ void neighborMaxFeatGatherGPU(
 
     maxFeatGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>
       (d_ifeats,d_vlens,d_vlens_bgs,pn2,fd,d_ogfeats_sum,d_ogmax_idxs);
+    gpuErrchk(cudaGetLastError())
 }
 
 
@@ -229,6 +234,7 @@ void neighborMaxFeatScatterGPU(
 
     gpuErrchk(cudaMemset(d_osfeats,0,pn1*fd*sizeof(FLT_TYPE)))
     maxFeatScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_igfeats_sum,d_igmax_idxs,vlens_bg,pn2,fd,d_osfeats);
+    gpuErrchk(cudaGetLastError())
 }
 
 
@@ -331,6 +337,7 @@ void concatNonCenterFeatScatterGPU(
 //    printf("here\n");
     concatNonCenterFeatScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>
             (d_ifeats,d_inidxs,d_inidxs_lens,d_inn_bgs,pn,ifn,d_onfeats);
+    gpuErrchk(cudaGetLastError())
 //    printf("forward end\n");
 }
 
@@ -354,6 +361,7 @@ void concatNonCenterFeatGatherGPU(
     gpuErrchk(cudaMemset(d_ifeats,0,pn*ifn*sizeof(float)))
     concatNonCenterFeatGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>
                (d_sfeats,d_inidxs,d_inidxs_lens,d_inn_bgs,pn,ifn,d_ifeats);
+    gpuErrchk(cudaGetLastError())
 //    printf("backward end\n");
 }
 
@@ -411,6 +419,7 @@ void eliminateCenterGPU(
     dim3 thread_dim(1024);
     eliminateCenter<INT_TYPE> <<<block_dim,thread_dim>>>
               (inidxs,inidxs_lens,inidxs_bgs,pn,onidxs,onidxs_lens,onidxs_bgs,ocidxs);
+    gpuErrchk(cudaGetLastError())
 }
 
 template void neighborSumFeatGatherGPU<float,unsigned int>

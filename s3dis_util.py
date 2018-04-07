@@ -89,8 +89,61 @@ def test_s3dis_preparing():
         for i in xrange(13):
             print len(data[i])
 
+def compute_weight():
+    from io_util import get_block_train_test_split
+    import numpy as np
+    train_list,test_list=get_block_train_test_split()
+
+    test_list=['data/S3DIS/sampled_test/'+fs for fs in test_list]
+    train_list=['data/S3DIS/sampled_train/'+fs for fs in train_list]
+    test_list+=train_list
+    labels=[]
+    for fs in test_list:
+        labels+=read_pkl(fs)[4]
+    labels=np.concatenate(labels,axis=0)
+
+    labelweights, _ = np.histogram(labels, range(14))
+    print labelweights
+    labelweights = labelweights.astype(np.float32)
+    labelweights = labelweights / np.sum(labelweights)
+    labelweights = 1 / np.log(1.2 + labelweights)
+
+    print labelweights
+
+
+def sample_subset():
+    train_list,test_list=get_block_train_test_split()
+
+    train_list=[fs for fs in train_list if fs.split('_')[3]=='office']
+    test_list=[fs for fs in test_list if fs.split('_')[3]=='office']
+
+    train_list=['data/S3DIS/sampled_train/'+fn for fn in train_list]
+    test_list=['data/S3DIS/sampled_test/'+fn for fn in test_list]
+
+    total_train=0
+    for fs in train_list:
+        total_train+=len(read_pkl(fs)[0])
+
+    print total_train
+
+    total_test=0
+    for fs in test_list:
+        total_test+=len(read_pkl(fs)[0])
+
+    print total_test
+
+
+def tmp_test():
+    import numpy as np
+    xyzs, rgbs, covars, lbls = read_pkl('cur_data.pkl')
+    for i in xrange(4):
+        print np.min(xyzs[i],axis=0)
+        print np.max(xyzs[i],axis=0)
+
 
 if __name__=="__main__":
-    prepare_s3dis_train()
+    # prepare_s3dis_train()
     # prepare_s3dis_test()
     # test_s3dis_preparing()
+    # compute_weight()
+    tmp_test()

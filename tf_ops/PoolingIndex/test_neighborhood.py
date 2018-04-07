@@ -13,7 +13,10 @@ ComputeVoxelIdxOp=tf.load_op_library('./ComputeVoxelIdxOp.so')
 pn=10240
 search_radius=0.1
 pts=np.random.uniform(-1.0,1.0,[pn,3])
+pts-=np.min(pts,axis=0,keepdims=True)
+pts[:,:2]-=1.1
 pts[:,2]=0.0
+print np.min(pts,axis=0)
 
 pts_pl=tf.placeholder(tf.float32,[None,3],'pts')
 idxs,lens,begs,cens=SearchNeighborhoodOp.search_neighborhood_brute_force(pts_pl,squared_nn_size=search_radius*search_radius)

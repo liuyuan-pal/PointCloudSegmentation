@@ -108,7 +108,8 @@ __global__ void diffFeatGather(
     FLT_TYPE *sfeats_p=&sfeats[nn_bg*ifn+ii];
     for(unsigned int ni=0;ni<nn;ni++)
     {
-        (*cifeats_p)+=-(*sfeats_p);
+//        (*cifeats_p)+=-(*sfeats_p);
+        atomicAdd(cifeats_p,-(*sfeats_p));
         sfeats_p+=ifn;
     }
     __syncthreads();
@@ -283,6 +284,7 @@ void neighborScatterGPU(
         diffFeatScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_ifeats,d_inidxs,d_inn_bgs,d_inidxs_lens,pn,ifn,d_sfeats);
     else
         featScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_ifeats,d_inidxs,d_inn_bgs,d_inidxs_lens,pn,ifn,d_sfeats);
+    gpuErrchk(cudaGetLastError())
 }
 
 
@@ -317,10 +319,16 @@ void neighborGatherGPU(
 
     gpuErrchk(cudaMemset(d_ifeats,0,pn*ifn*sizeof(FLT_TYPE)))
     // scatter data to matrix
+//    printf("diff %d\n",use_diff);
+//    printf("pn %d fd %d\n",pn,ifn);
+//    printf("pn %d fd %d\n",pn,ifn);
+//    printf("bdim0 %d,bdim1 %d,bdim2 %d\n",bdim0,bdim1,bdim2);
+//    printf("tdim0 %d,tdim1 %d,tdim2 %d\n",tdim0,tdim1,tdim2);
     if(use_diff)
         diffFeatGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>> (d_sfeats,d_inidxs,d_inn_bgs,d_inidxs_lens,pn,ifn,d_ifeats);
     else
         featGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>> (d_sfeats,d_inidxs,d_inn_bgs,d_inidxs_lens,pn,ifn,d_ifeats);
+    gpuErrchk(cudaGetLastError())
 }
 
 template<typename FLT_TYPE,typename INT_TYPE>

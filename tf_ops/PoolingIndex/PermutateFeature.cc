@@ -97,7 +97,6 @@ public:
     }
     void Compute(OpKernelContext* context) override
     {
-        // fetch input tensor
         const Tensor& feats=context->input(0);      // [pn,ps]
         const Tensor& idxs=context->input(1);       // [pn]
         const Tensor& back_idxs=context->input(2);       // [pn]

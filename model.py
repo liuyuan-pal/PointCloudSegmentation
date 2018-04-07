@@ -464,9 +464,14 @@ def graph_diff_conv_pool_stage(stage_idx, cxyzs, dxyz, feats, cidxs, nidxs, nidx
     return fc_final, cfeats  # cfeats: [pn,fc_dims+gxyz_dim+feats_dim]
 
 
-def graph_pool_stage(stage_idx, feats, vlens, vlens_bgs):
-    with tf.name_scope('{}_pool'.format(stage_idx)):
+def graph_max_pool_stage(stage_idx, feats, vlens, vlens_bgs):
+    with tf.name_scope('{}_max_pool'.format(stage_idx)):
         pfeats=graph_pool(feats,vlens,vlens_bgs)
+    return pfeats
+
+def graph_avg_pool_stage(stage_idx, feats, vlens, vbegs, vcens):
+    with tf.name_scope('{}_avg_pool'.format(stage_idx)):
+        pfeats=graph_avg_pool(feats,vlens,vbegs,vcens)
     return pfeats
 
 
@@ -484,7 +489,7 @@ def graph_conv_pool_v1(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nid
             fc0,lf0=graph_conv_pool_stage(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
                                           m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -492,7 +497,7 @@ def graph_conv_pool_v1(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nid
                                           m, 32, 8, [32, 32, 32, 64, 64, 64], [32, 32, 32, 64, 64, 64],
                                           [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -530,7 +535,7 @@ def graph_conv_pool_v2_deeper(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cid
             fc0,lf0=graph_conv_pool_stage(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
                                           m, feats.shape[1], 8, [8, 8, 16, 32], [8, 8, 16, 32], [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -538,7 +543,7 @@ def graph_conv_pool_v2_deeper(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cid
                                           m, 32, 8, [32, 32, 32, 32, 64, 64, 64, 64], [32, 32, 32, 32, 64, 64, 64, 64],
                                           [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -576,7 +581,7 @@ def graph_conv_pool_v3(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nid
             fc0,lf0=graph_conv_pool_stage(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
                                           m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -584,7 +589,7 @@ def graph_conv_pool_v3(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nid
                                           m, 32, 8, [32, 32, 32, 64, 64, 64], [32, 32, 32, 64, 64, 64],
                                           [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -625,7 +630,7 @@ def graph_conv_pool_v4(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nid
                                                m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [False,False,False],
                                                [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -634,7 +639,7 @@ def graph_conv_pool_v4(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nid
                                                [False, False, False, False, False, False],
                                                [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -675,7 +680,7 @@ def graph_conv_pool_v5(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nid
                                                m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [True,False,False],
                                                [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -684,7 +689,7 @@ def graph_conv_pool_v5(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, nid
                                                [True, False, False, True, False, False],
                                                [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -773,9 +778,7 @@ def classifier_v3(feats, pfeats, is_training, num_classes, reuse=False, use_bn=F
                                  padding='VALID',activation_fn=tf.nn.relu,reuse=reuse,
                                  normalizer_fn=bn):
 
-            # pfeats = tf.cond(is_training,lambda:tf.nn.dropout(pfeats,0.7),lambda:pfeats)
-            # feats = tf.cond(is_training,lambda:tf.nn.dropout(feats,0.7),lambda:feats)
-            feats = tf.cond(is_training, lambda: tf.nn.dropout(feats, 0.5), lambda: feats)
+            # feats = tf.cond(is_training, lambda: tf.nn.dropout(feats, 0.5), lambda: feats)
             normalizer_params['scope']='class_mlp1_bn'
             class_mlp1 = tf.contrib.layers.conv2d(
                 feats, num_outputs=512, scope='class_mlp1',normalizer_params=normalizer_params)
@@ -982,7 +985,7 @@ def graph_conv_pool_v6_learn_pmiu(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs,
                                                m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [False, False, True],
                                                [32, 32, 32], 32, pmiu, 8, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -991,7 +994,7 @@ def graph_conv_pool_v6_learn_pmiu(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs,
                                                [False, False, True, False, False, True],
                                                [128, 128, 128], 128, pmiu, 8, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1094,7 +1097,7 @@ def graph_conv_pool_v7_nosum_lpmiu(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs
                                                m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [False, True, True],
                                                [32, 32, 32], 32, pmiu, 16, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -1103,7 +1106,7 @@ def graph_conv_pool_v7_nosum_lpmiu(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs
                                                [False, False, True, True, True, True],
                                                [128, 128, 128], 128, pmiu, 16, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1146,7 +1149,7 @@ def graph_conv_pool_v8_nosum_all(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, 
                                                          m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [False, False, False],
                                                          [32, 32, 32], 32, pmiu, 16, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -1155,7 +1158,7 @@ def graph_conv_pool_v8_nosum_all(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, 
                                                          [False, False, False, False, False, False],
                                                          [128, 128, 128], 128, pmiu, 16, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1197,7 +1200,7 @@ def graph_conv_pool_model_v1(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidx
                                                            m, feats.shape[1], 8, [8, 16, 32], [8, 16, 32], [False, False, False],
                                                            [32, 32, 32], 32, pmiu, 16, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -1206,7 +1209,7 @@ def graph_conv_pool_model_v1(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidx
                                                            [False, False, False, False, False, False],
                                                            [128, 128, 128], 128, pmiu, 16, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1304,14 +1307,14 @@ def graph_conv_pool_new_v2(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs,
             fc0,lf0=graph_conv_pool_stage_v2(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
                                              m, 1.5/0.15, feats.shape[1], 8, [8, 16, 32], [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
             fc1,lf1=graph_conv_pool_stage_v2(1, cxyzs[1], dxyzs[1], fc0_pool, cidxs[1], nidxs[1], nidxs_lens[1], nidxs_bgs[1],
                                              m, 2.0/0.4, 32, 8, [32, 32, 32, 64, 64, 64], [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1382,7 +1385,7 @@ def graph_conv_vanilla_pool_new_v2(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs
                                                 m, 1.5 / 0.15, feats.shape[1], 8, [8, 16, 32], [32, 32, 32], 32,
                                                 pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool = graph_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
+            fc0_pool = graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -1391,7 +1394,7 @@ def graph_conv_vanilla_pool_new_v2(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs
                                                 m, 2.0 / 0.4, 32, 8, [32, 32, 32, 64, 64, 64], [128, 128, 128], 128,
                                                 pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool = graph_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
+            fc1_pool = graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1471,14 +1474,14 @@ def graph_conv_vanilla_pool_new_sum(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidx
             fc0, lf0 = graph_conv_pool_stage_sum(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
                                                 m, 10.0, feats.shape[1], 8, [8, 16, 32], [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool = graph_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
+            fc0_pool = graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
             fc1, lf1 = graph_conv_pool_stage_sum(1, cxyzs[1], dxyzs[1], fc0_pool, cidxs[1], nidxs[1], nidxs_lens[1], nidxs_bgs[1],
                                                 m, 2.0/0.5, 32, 8, [32, 32, 32, 64, 64, 64], [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool = graph_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
+            fc1_pool = graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1556,14 +1559,14 @@ def graph_conv_pool_lpmiu(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, 
             fc0,lf0=graph_conv_pool_stage_lpmiu(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
                                                 m, 1.5/0.15, feats.shape[1], 8, [8, 16, 32], [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
             fc1,lf1=graph_conv_pool_stage_lpmiu(1, cxyzs[1], dxyzs[1], fc0_pool, cidxs[1], nidxs[1], nidxs_lens[1], nidxs_bgs[1],
                                                 m, 2.0/0.4, 32, 8, [32, 32, 32, 64, 64, 64], [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1642,14 +1645,14 @@ def graph_conv_pool_lpmiu_nosharing(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidx
             fc0,lf0=graph_conv_pool_stage_lpmiu_nosharing(0, cxyzs[0], dxyzs[0], feats, cidxs[0], nidxs[0], nidxs_lens[0], nidxs_bgs[0],
                                                 m, 1.5/0.15, feats.shape[1], 8, [8, 16, 32], [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool=graph_pool_stage(0,fc0,vlens[0],vlens_bgs[0])
+            fc0_pool=graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
             fc1,lf1=graph_conv_pool_stage_lpmiu_nosharing(1, cxyzs[1], dxyzs[1], fc0_pool, cidxs[1], nidxs[1], nidxs_lens[1], nidxs_bgs[1],
                                                 m, 2.0/0.4, 32, 8, [32, 32, 32, 64, 64, 64], [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool=graph_pool_stage(1,fc1,vlens[1],vlens_bgs[1])
+            fc1_pool=graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1735,7 +1738,7 @@ def graph_conv_pool_lpmiu_nosharing_feats(cxyzs, dxyzs, feats, vlens, vlens_bgs,
                                                              m, 1.5 / 0.15, feats.shape[1], 8, [8, 16, 32],
                                                              [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool = graph_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
+            fc0_pool = graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -1744,7 +1747,7 @@ def graph_conv_pool_lpmiu_nosharing_feats(cxyzs, dxyzs, feats, vlens, vlens_bgs,
                                                              m, 2.0 / 0.4, 32, 8, [32, 32, 32, 64, 64, 64],
                                                              [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool = graph_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
+            fc1_pool = graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1829,7 +1832,7 @@ def graph_conv_pool_edge(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, n
                                                              m, 1.5 / 0.15, feats.shape[1], 8, [8, 16, 32],
                                                              [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool = graph_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
+            fc0_pool = graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -1838,7 +1841,7 @@ def graph_conv_pool_edge(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, cidxs, n
                                                              m, 2.0 / 0.4, 32, 8, [32, 32, 32, 64, 64, 64],
                                                              [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool = graph_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
+            fc1_pool = graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1913,7 +1916,7 @@ def graph_conv_pool_edge_vanilla_pool(cxyzs, dxyzs, feats, vlens, vlens_bgs, vci
                                                              m, 1.5 / 0.15, feats.shape[1], 8, [8, 16, 32],
                                                              [32, 32, 32], 32, pmiu, reuse)
             # fc0_pool [pn1,]
-            fc0_pool = graph_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
+            fc0_pool = graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
         with tf.name_scope('conv_stage1'):
             # fc1 [pn1,128] lf1 [pn1,480]
@@ -1922,7 +1925,7 @@ def graph_conv_pool_edge_vanilla_pool(cxyzs, dxyzs, feats, vlens, vlens_bgs, vci
                                                              m, 2.0 / 0.4, 32, 8, [32, 32, 32, 64, 64, 64],
                                                              [128, 128, 128], 128, pmiu, reuse)
             # fc1_pool [pn2,]
-            fc1_pool = graph_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
+            fc1_pool = graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
         with tf.name_scope('conv_stage2'):
             # fc2 [pn2,256] lf2 [pn2,648]
@@ -1966,7 +1969,7 @@ def graph_conv_pool_edge_shallow(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, 
                                                                      m, 1.5 / 0.15, feats.shape[1], 8, [8, 16],
                                                                      [32, 32], 32, pmiu, reuse)
                     # fc0_pool [pn1,]
-                    fc0_pool = graph_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
+                    fc0_pool = graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
                 with tf.name_scope('conv_stage1'):
                     # fc1 [pn1,128] lf1 [pn1,480]
@@ -1975,7 +1978,7 @@ def graph_conv_pool_edge_shallow(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidxs, 
                                                                      m, 2.0 / 0.4, 32, 8, [32, 64],
                                                                      [64, 64], 64, pmiu, reuse)
                     # fc1_pool [pn2,]
-                    fc1_pool = graph_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
+                    fc1_pool = graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
                 with tf.name_scope('conv_stage2'):
                     # fc2 [pn2,256] lf2 [pn2,648]
@@ -2020,7 +2023,7 @@ def graph_conv_pool_edge_shallow_v2(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidx
                                                                      m, 1.5 / 0.15, feats.shape[1], 8, [8, 8, 8],
                                                                      [16, 16], 16, pmiu, reuse)
                     # fc0_pool [pn1,]
-                    fc0_pool = graph_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
+                    fc0_pool = graph_max_pool_stage(0, fc0, vlens[0], vlens_bgs[0])
 
                 with tf.name_scope('conv_stage1'):
                     # fc1 [pn1,128] lf1 [pn1,480]
@@ -2029,7 +2032,7 @@ def graph_conv_pool_edge_shallow_v2(cxyzs, dxyzs, feats, vlens, vlens_bgs, vcidx
                                                                      m, 2.0 / 0.4, 16, 8, [16, 16, 16, 16, 32, 32, 32, 32],
                                                                      [64, 64], 64, pmiu, reuse)
                     # fc1_pool [pn2,]
-                    fc1_pool = graph_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
+                    fc1_pool = graph_max_pool_stage(1, fc1, vlens[1], vlens_bgs[1])
 
                 with tf.name_scope('conv_stage2'):
                     # fc2 [pn2,256] lf2 [pn2,648]

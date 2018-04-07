@@ -127,7 +127,7 @@ public:
     void Compute(OpKernelContext* context) override
     {
         // fetch input tensor
-        const Tensor& voxel_idxs=context->input(0);      // [pn1,fd]
+        const Tensor& voxel_idxs=context->input(0);      // [pn1,3]
 
         unsigned int pn=voxel_idxs.dim_size(0);
         OP_REQUIRES(context,voxel_idxs.dim_size(1)==3,errors::InvalidArgument("voxel_idxs dim 1"));

@@ -6,7 +6,6 @@
 #include <thrust/reduce.h>
 #include <ctime>
 
-
 __global__
 void computeWholeIdxsKernel(
         int *voxel_idxs,    //[pn,3]
@@ -109,57 +108,50 @@ void computePermutationInfoImpl(
     // get whole idx
     thrust::device_vector<long> whole_idxs(pn);
     computeWholeIdxsKernel<<<block_dim,thread_dim>>>(voxel_idxs,thrust::raw_pointer_cast(whole_idxs.data()),pn);
+    gpuErrchk(cudaGetLastError())
     fillIndex<<<block_dim,thread_dim>>>(origin2permutation_idxs,pn);
+    gpuErrchk(cudaGetLastError())
 
-//    printf("whole idx %f\n",(clock()-bg)/float(CLOCKS_PER_SEC));
-
-//    bg=clock();
     // sort by keys get o2p idx
     thrust::device_ptr<int> o2p_ptr(origin2permutation_idxs);
     thrust::sort_by_key(thrust::device,whole_idxs.begin(),whole_idxs.end(),o2p_ptr);
-//    printf("sort %f\n",(clock()-bg)/float(CLOCKS_PER_SEC));
+    gpuErrchk(cudaGetLastError())
 
-//    bg=clock();
     // p2o
     computeInverseMap<<<block_dim,thread_dim>>>(origin2permutation_idxs,permutation2origin_idxs,pn);
-//    printf("inverse %f\n",(clock()-bg)/float(CLOCKS_PER_SEC));
+    gpuErrchk(cudaGetLastError())
 
-    // reduce by keys get vn
-//    bg=clock();
     thrust::device_vector<int> ones_array(pn);
     thrust::device_vector<int> result_keys(pn);
     thrust::device_vector<int> result_values(pn);
     thrust::fill(ones_array.begin(),ones_array.end(),1);
+    gpuErrchk(cudaGetLastError())
 
     thrust::pair<thrust::detail::normal_iterator<thrust::device_ptr<int> >, thrust::detail::normal_iterator<thrust::device_ptr<int> > >
     new_end = thrust::reduce_by_key(thrust::device, whole_idxs.begin(), whole_idxs.end(),
                                    ones_array.begin(), result_keys.begin(), result_values.begin());
+    gpuErrchk(cudaGetLastError())
     *vn=new_end.second-result_values.begin();
-//    printf("reduce %f\n",(clock()-bg)/float(CLOCKS_PER_SEC));
 
-    // copy lens back
-//    bg=clock();
     gpuErrchk(cudaMalloc((void**)lens,sizeof(int)*(*vn)))
     thrust::device_ptr<int> lens_ptr(*lens);
     thrust::copy(result_values.data(),result_values.data()+(*vn),lens_ptr);
-//    printf("copy %f\n",(clock()-bg)/float(CLOCKS_PER_SEC));
+    gpuErrchk(cudaGetLastError())
 
     // scan begs
-//    bg=clock();
     gpuErrchk(cudaMalloc((void**)begs,sizeof(int)*(*vn)))
     thrust::device_ptr<int> begs_ptr(*begs);
-    thrust::exclusive_scan(lens_ptr,lens_ptr+pn,begs_ptr);
-//    printf("scan %f\n",(clock()-bg)/float(CLOCKS_PER_SEC));
+    thrust::exclusive_scan(lens_ptr,lens_ptr+(*vn),begs_ptr);
+    gpuErrchk(cudaGetLastError())
 
     // cens
-//    bg=clock();
     gpuErrchk(cudaMalloc((void**)cens,sizeof(int)*pn))
     int vblock_num = (*vn) / 1024;
     if ((*vn) % 1024 > 0) vblock_num++;
     dim3 vblock_dim(vblock_num);
     dim3 vthread_dim(1024);
     computeCens<<<vblock_dim,vthread_dim>>>(*cens,*lens,*begs,*vn);
-//    printf("cens %f\n",(clock()-bg)/float(CLOCKS_PER_SEC));
+    gpuErrchk(cudaGetLastError())
 }
 
 void computePermutationInfoWithClassesImpl(
@@ -222,7 +214,7 @@ void computePermutationInfoWithClassesImpl(
 //    bg=clock();
     gpuErrchk(cudaMalloc((void**)begs,sizeof(int)*(*vn)))
     thrust::device_ptr<int> begs_ptr(*begs);
-    thrust::exclusive_scan(lens_ptr,lens_ptr+pn,begs_ptr);
+    thrust::exclusive_scan(lens_ptr,lens_ptr+(*vn),begs_ptr);
 //    printf("scan %f\n",(clock()-bg)/float(CLOCKS_PER_SEC));
 
     // cens

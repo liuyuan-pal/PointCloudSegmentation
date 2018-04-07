@@ -43,27 +43,94 @@ def build_hierarchy(xyzs,feats_list,vs1,vs2):
     return cxyz1,dxyz1,vlens1,cxyz2,dxyz2,vlens2,cxyz3,feats_list
 
 
-def eval_max_pool(ifeats,vlens,vlens_bgs,dpfeats):
+def eval_max_pool(ifeats,vlens,vlens_bgs,dpfeats,sess):
     ifeats_pl=tf.placeholder(tf.float32,[None,None])
     vlens_pl=tf.placeholder(tf.int32,[None])
     vlens_bgs_pl=tf.placeholder(tf.int32,[None])
 
-    pfeats=graph_conv_layer.graph_pool(ifeats_pl,vlens_pl,vlens_bgs_pl)
+    pfeats,max_idxs=graph_conv_layer.graph_pool_for_test(ifeats_pl,vlens_pl,vlens_bgs_pl)
     difeats=tf.gradients(pfeats,ifeats_pl,dpfeats)[0]
 
-    with tf.Session() as sess:
-        pfeats_val,difeats_val=sess.run(
-            [pfeats,difeats],feed_dict={
-                ifeats_pl:ifeats,
-                vlens_pl:vlens,
-                vlens_bgs_pl:vlens_bgs
-            }
-        )
+    pfeats_val,difeats_val,idxs_val=sess.run(
+        [pfeats,difeats,max_idxs],feed_dict={
+            ifeats_pl:ifeats,
+            vlens_pl:vlens,
+            vlens_bgs_pl:vlens_bgs
+        }
+    )
 
-    return pfeats_val,difeats_val
+    return pfeats_val,difeats_val,idxs_val
 
+def test_max_pool_single(pn2,dim,sess):
+    vlens=np.random.randint(3,5,[pn2])
+    vlens_bgs=compute_nidxs_bgs(vlens)
 
-def eval_unpool(ifeats,vlens,vlens_bgs,cidxs,dupfeats):
+    pn1=vlens_bgs[-1]+vlens[-1]
+    ifeats=np.random.uniform(-1.0,1.0,[pn1,dim])
+    pfeats,idxs=np_pool_forward(ifeats,vlens,vlens_bgs)
+    dpfeats=np.random.uniform(-1.0,1.0,pfeats.shape)
+    difeats=np_pool_backward(dpfeats,pfeats,ifeats,vlens,vlens_bgs)
+
+    ifeats=np.ascontiguousarray(ifeats,np.float32)
+    dpfeats=np.ascontiguousarray(dpfeats,np.float32)
+    vlens=np.ascontiguousarray(vlens,np.int32)
+    vlens_bgs=np.ascontiguousarray(vlens_bgs,np.int32)
+    pfeats_tf,difeats_tf,idxs_tf=eval_max_pool(ifeats,vlens,vlens_bgs,dpfeats,sess)
+
+    diff_abs=np.abs(pfeats_tf-pfeats)
+    # print np.mean(diff_abs),np.max(diff_abs)
+    if np.mean(diff_abs) > 1e-5 or np.max(diff_abs) > 1e-4:
+        print 'forward error!'
+        print pn2,dim
+        exit(0)
+
+    idxs_diff=np.sum(idxs-idxs_tf)
+    if idxs_diff>0:
+        xs,ys=np.nonzero(np.not_equal(idxs,idxs_tf))
+        error=False
+        for k in xrange(len(xs)):
+            diff_val=ifeats[vlens_bgs[xs[k]]+idxs[xs[k],ys[k]],ys[k]]-ifeats[vlens_bgs[xs[k]]+idxs_tf[xs[k],ys[k]],ys[k]]
+            if abs(diff_val)>1e-5:
+                error=True
+                break
+
+        if error:
+            print 'idxs error!'
+            print pn2,dim
+            exit(0)
+        else:
+            return
+
+    diff_abs=np.abs(difeats_tf-difeats)
+    # print np.mean(diff_abs),np.max(diff_abs)
+    if np.mean(diff_abs) > 1e-5 or np.max(diff_abs) > 1e-4:
+        print 'backward error!'
+        print pn2,dim
+        exit(0)
+
+def test_max_pool():
+    sess=tf.Session()
+    for i in xrange(100):
+        pn=np.random.randint(30,1030)
+        fd=np.random.randint(30,1030)
+        test_max_pool_single(pn,fd,sess)
+
+    for i in xrange(100):
+        pn=np.random.randint(1010,1050)
+        fd=np.random.randint(300,500)
+        test_max_pool_single(pn,fd,sess)
+
+    for i in xrange(100):
+        pn=np.random.randint(300,500)
+        fd=np.random.randint(1010,1050)
+        test_max_pool_single(pn,fd,sess)
+
+    for i in xrange(10):
+        pn=np.random.randint(2048,4096)
+        fd=np.random.randint(50,100)
+        test_max_pool_single(pn,fd,sess)
+
+def eval_unpool(ifeats,vlens,vlens_bgs,cidxs,dupfeats,sess):
     ifeats_pl=tf.placeholder(tf.float32,[None,None])
     vlens_pl=tf.placeholder(tf.int32,[None])
     vlens_bgs_pl=tf.placeholder(tf.int32,[None])
@@ -72,49 +139,24 @@ def eval_unpool(ifeats,vlens,vlens_bgs,cidxs,dupfeats):
     upfeats=graph_conv_layer.graph_unpool(ifeats_pl,vlens_pl,vlens_bgs_pl,cidxs_pl)
     difeats=tf.gradients(upfeats,ifeats_pl,dupfeats)[0]
 
-    with tf.Session() as sess:
-        upfeats_val,difeats_val=sess.run(
-            [upfeats,difeats],feed_dict={
-                ifeats_pl:ifeats,
-                vlens_pl:vlens,
-                vlens_bgs_pl:vlens_bgs,
-                cidxs_pl:cidxs
-            }
-        )
+    upfeats_val,difeats_val=sess.run(
+        [upfeats,difeats],feed_dict={
+            ifeats_pl:ifeats,
+            vlens_pl:vlens,
+            vlens_bgs_pl:vlens_bgs,
+            cidxs_pl:cidxs
+        }
+    )
 
     return upfeats_val,difeats_val
 
-def test_max_pool():
-    pn2=30
-    dim=4
-    vlens=np.random.randint(3,5,[pn2])
-    vlens_bgs=compute_nidxs_bgs(vlens)
-
-    pn1=vlens_bgs[-1]+vlens[-1]
-    ifeats=np.random.uniform(-1.0,1.0,[pn1,dim])
-    pfeats,max_idxs=np_pool_forward(ifeats,vlens,vlens_bgs)
-    dpfeats=np.random.uniform(-1.0,1.0,pfeats.shape)
-    difeats=np_pool_backward(dpfeats,pfeats,ifeats,vlens,vlens_bgs)
-
-    ifeats=np.ascontiguousarray(ifeats,np.float32)
-    dpfeats=np.ascontiguousarray(dpfeats,np.float32)
-    vlens=np.ascontiguousarray(vlens,np.int32)
-    vlens_bgs=np.ascontiguousarray(vlens_bgs,np.int32)
-    pfeats_tf,difeats_tf=eval_max_pool(ifeats,vlens,vlens_bgs,dpfeats)
-
-    print 'forward diff {}'.format(np.max(pfeats_tf-pfeats))
-    print 'backward diff {}'.format(np.max(np.abs(difeats_tf-difeats)))
-    print np.mean(difeats_tf)
-
-
-def test_unpool():
-    vlens=np.random.randint(5,10,[50])
+def test_unpool_single(pn2, dim, sess):
+    vlens=np.random.randint(5,10,[pn2])
     vlens_bgs=compute_nidxs_bgs(vlens)
     cidxs=compute_cidxs(vlens)
 
     pn1=vlens_bgs[-1]+vlens[-1]
-    pn2=50
-    ifeats=np.random.uniform(-1.0,1.0,[pn2,16])
+    ifeats=np.random.uniform(-1.0, 1.0, [pn2, dim])
     upfeats=np_unpool_forward(ifeats,vlens,vlens_bgs,cidxs)
     dupfeats=np.random.uniform(-1.0,1.0,upfeats.shape)
     difeats=np_unpool_backward(dupfeats,upfeats,ifeats,vlens,vlens_bgs,cidxs)
@@ -123,12 +165,19 @@ def test_unpool():
     dupfeats=np.ascontiguousarray(dupfeats,np.float32)
     vlens=np.ascontiguousarray(vlens,np.int32)
     vlens_bgs=np.ascontiguousarray(vlens_bgs,np.int32)
-    upfeats_tf,difeats_tf=eval_unpool(ifeats,vlens,vlens_bgs,cidxs,dupfeats)
+    upfeats_tf,difeats_tf=eval_unpool(ifeats,vlens,vlens_bgs,cidxs,dupfeats,sess)
 
-    print 'forward diff {}'.format(np.max(upfeats_tf-upfeats))
-    print 'backward diff {}'.format(np.max(difeats_tf-difeats))
-    print np.mean(upfeats_tf)
-    print np.mean(difeats_tf)
+    diff_abs=np.abs(upfeats_tf-upfeats)
+    if np.mean(diff_abs) > 1e-5 or np.max(diff_abs) > 1e-4:
+        print 'error!'
+        print pn2,dim
+        exit(0)
+
+    diff_abs=np.abs(difeats_tf-difeats)
+    if np.mean(diff_abs) > 1e-5 or np.max(diff_abs) > 1e-4:
+        print 'error!'
+        print pn2,dim
+        exit(0)
 
 if __name__=="__main__":
     test_max_pool()

@@ -35,7 +35,7 @@ def np_pool_forward(ifeats,vlens,vlens_bgs):
         pfeats[i]=np.max(cfeats,axis=0)
         max_idxs[i]=np.argmax(cfeats,axis=0)
 
-    return pfeats
+    return pfeats,max_idxs
 
 
 def np_pool_backward(dpfeats,pfeats,ifeats,vlens,vlens_bgs):
