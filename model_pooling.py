@@ -317,10 +317,57 @@ def graph_conv_pool_edge_simp_2layers(xyzs, dxyzs, feats, vlens, vbegs, vcens, v
     return upf0, lf, ops
 
 
+def graph_conv_pool_edge_simp_2layers_s3d(xyzs, dxyzs, feats, vlens, vbegs, vcens, voxel_sizes, block_size,
+                                          radius=(0.15,0.3,0.5), reuse=False):
+    with tf.name_scope('base_graph_conv_edge_net'):
+        with tf.variable_scope('base_graph_conv_edge_net',reuse=reuse):
+            with tf.name_scope('conv_stage0'):
+                fc0, lf0, ops0 = graph_conv_pool_stage_edge_simp(0, xyzs[0], dxyzs[0], feats, tf.shape(feats)[1], radius=radius[0],
+                                                                 reuse=reuse, voxel_size=voxel_sizes[0]/2.0,
+                                                                 gxyz_dim=16, gc_dims=[16],
+                                                                 gfc_dims=[16,16,16], final_dim=64)
+                fc0_pool = graph_max_pool_stage(0, fc0, vlens[0], vbegs[0])             # 64
+                lf0_avg = graph_avg_pool_stage(0, lf0, vlens[0], vbegs[0], vcens[0])    # 61
+                ifeats_0 = tf.concat([fc0_pool,lf0_avg],axis=1)
 
-def naive_model(xyzs, dxyzs, feats, vlens, vbegs, vcens, voxel_sizes, block_size,
-                                      radius=(0.15,0.3,0.5), reuse=False):
-    return feats,feats,feats
+            with tf.name_scope('conv_stage1'):
+                fc1, lf1, ops1 = graph_conv_pool_stage_edge_simp(1, xyzs[1], xyzs[1], ifeats_0, tf.shape(ifeats_0)[1], radius=radius[1],
+                                                                 reuse=reuse, voxel_size=voxel_sizes[1]/2.0,
+                                                                 gxyz_dim=16, gc_dims=[16,16,32,32],
+                                                                 gfc_dims=[32,32,32], final_dim=128)
+                fc1_pool = graph_max_pool_stage(1, fc1, vlens[1], vbegs[1])         # 256
+                lf1_avg = graph_avg_pool_stage(1, lf1, vlens[1], vbegs[1], vcens[1])# 429
+                ifeats_1 = tf.concat([fc1_pool,lf1_avg],axis=1)                     # 685
+
+            with tf.name_scope('conv_stage2'):
+                fc2, lf2, ops2 = graph_conv_pool_stage_edge_simp(2, xyzs[2], xyzs[2], ifeats_1, tf.shape(ifeats_1)[1], radius=radius[2],
+                                                                 reuse=reuse, voxel_size=block_size/2.0,
+                                                                 gxyz_dim=16, gc_dims=[32,32,64,64],
+                                                                 gfc_dims=[64,64,64], final_dim=384)
+                fc2_pool = tf.reduce_max(fc2, axis=0)
+                lf2_avg = tf.reduce_mean(lf2, axis=0)
+                ifeats_2 = tf.concat([fc2_pool,lf2_avg],axis=0)
+
+            with tf.name_scope('unpool_stage2'):
+                upfeats2 = tf.tile(tf.expand_dims(ifeats_2, axis=0), [tf.shape(fc2)[0], 1])
+                upf2 = tf.concat([upfeats2, fc2, lf2], axis=1)
+
+            with tf.name_scope('unpool_stage1'):
+                upfeats1 = graph_unpool_stage(1, upf2, vlens[1], vbegs[1], vcens[1])
+                upf1 = tf.concat([upfeats1, fc1, lf1], axis=1)
+
+            with tf.name_scope('unpool_stage0'):
+                upfeats0 = graph_unpool_stage(0, upf1, vlens[0], vbegs[0], vcens[0])
+                upf0 = tf.concat([upfeats0, fc0, lf0], axis=1)
+
+            lf = tf.concat([fc0, lf0], axis=1)
+
+            # ops1=[graph_unpool_stage(1+idx, op, vlens, vbegs, vcens) for idx,op in enumerate(ops1)]
+            # ops0+=ops1
+            ops=[fc0,lf0,fc1,lf1,fc2,lf2]
+
+    return upf0, lf, ops
+
 
 
 ###############################

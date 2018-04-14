@@ -4,42 +4,43 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model_pooling import points_pooling_two_layers,graph_conv_pool_edge_simp_2layers,classifier_v3
+from model_pooling import points_pooling_two_layers,graph_conv_pool_edge_simp_2layers_s3d,classifier_v3
 from train_util import *
 from io_util import get_semantic3d_block_train_list,read_pkl,get_semantic3d_class_names,read_fn_hierarchy,\
-    save_pkl,get_semantic3d_block_test_list
+    save_pkl,get_semantic3d_block_train_test_list
 from provider import Provider,default_unpack_feats_labels
 from draw_util import output_points,get_semantic3d_class_colors
 from functools import partial
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--num_gpus', type=int, default=4, help='')
-parser.add_argument('--batch_size', type=int, default=1, help='')
+def parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--num_gpus', type=int, default=4, help='')
+    parser.add_argument('--batch_size', type=int, default=1, help='')
 
-parser.add_argument('--lr_init', type=float, default=1e-3, help='')
-parser.add_argument('--lr_clip', type=float, default=1e-5, help='')
-parser.add_argument('--decay_rate', type=float, default=0.5, help='')
-parser.add_argument('--decay_epoch', type=int, default=50, help='')
-parser.add_argument('--num_classes', type=int, default=9, help='')
+    parser.add_argument('--lr_init', type=float, default=1e-3, help='')
+    parser.add_argument('--lr_clip', type=float, default=1e-5, help='')
+    parser.add_argument('--decay_rate', type=float, default=0.5, help='')
+    parser.add_argument('--decay_epoch', type=int, default=50, help='')
+    parser.add_argument('--num_classes', type=int, default=9, help='')
 
-parser.add_argument('--restore',type=bool, default=False, help='')
-parser.add_argument('--restore_epoch', type=int, default=0, help='')
-parser.add_argument('--restore_model', type=str, default='', help='')
+    parser.add_argument('--restore',type=bool, default=False, help='')
+    parser.add_argument('--restore_epoch', type=int, default=0, help='')
+    parser.add_argument('--restore_model', type=str, default='', help='')
 
-parser.add_argument('--log_step', type=int, default=240, help='')
-parser.add_argument('--train_dir', type=str, default='train/semantic_edge_2layer_v2', help='')
-parser.add_argument('--save_dir', type=str, default='model/semantic_edge_2layer_v2', help='')
-parser.add_argument('--log_file', type=str, default='semantic_edge_2layer_v2.log', help='')
+    parser.add_argument('--log_step', type=int, default=240, help='')
+    parser.add_argument('--train_dir', type=str, default='train/semantic_edge_2layer_v3', help='')
+    parser.add_argument('--save_dir', type=str, default='model/semantic_edge_2layer_v3', help='')
+    parser.add_argument('--log_file', type=str, default='semantic_edge_2layer_v3.log', help='')
 
+    parser.add_argument('--eval',type=bool, default=False, help='')
+    parser.add_argument('--eval_model',type=str, default='model/label/unsupervise80.ckpt',help='')
+    parser.add_argument('--eval_output',type=bool, default=False,help='')
 
-parser.add_argument('--eval',type=bool, default=False, help='')
-parser.add_argument('--eval_model',type=str, default='model/label/unsupervise80.ckpt',help='')
-parser.add_argument('--eval_output',type=bool, default=False,help='')
+    parser.add_argument('--train_epoch_num', type=int, default=500, help='')
 
-parser.add_argument('--train_epoch_num', type=int, default=500, help='')
+    FLAGS = parser.parse_args()
 
-FLAGS = parser.parse_args()
-
+    return FLAGS
 # training set labels count
 # [ 69821678.  38039379.  52260419.  54975958.  10229433.  67044610.
 #    7620115.   3612462.   2362445.]
@@ -51,8 +52,8 @@ def tower_loss(xyzs, feats, labels, is_training,reuse=False):
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         xyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
             points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.25,voxel_size2=1.0,block_size=10.0)
-        global_feats,local_feats,ops=graph_conv_pool_edge_simp_2layers(xyzs, dxyzs, feats, vlens, vbegs, vcens,
-                                                                       [0.25, 1.0], 10.0, [0.25,0.5,2.0], reuse)
+        global_feats,local_feats,ops=graph_conv_pool_edge_simp_2layers_s3d(xyzs, dxyzs, feats, vlens, vbegs, vcens,
+                                                                           [0.25, 1.0], 10.0, [0.25,0.5,2.0], reuse)
 
         global_feats_exp=tf.expand_dims(global_feats,axis=0)
         local_feats_exp=tf.expand_dims(local_feats,axis=0)
@@ -241,13 +242,10 @@ def build_placeholder(num_gpus):
 
 
 def train():
-    test_set=['sg27_station5_intensity_rgb','sg27_station9_intensity_rgb']
-    train_list,_=get_semantic3d_block_train_list(test_set)
-    _,test_list=get_semantic3d_block_test_list(test_set)
-    train_list=['data/Semantic3D.Net/block/sampled/merged/'+fn for fn in train_list]
-    test_list=['data/Semantic3D.Net/block/sampled/merged_test/'+fn for fn in test_list]
-    # train_list=['data/Semantic3D.Net/block/sampled/merged/sg27_station5_intensity_rgb_20.pkl']
-    # test_list=['data/Semantic3D.Net/block/sampled/merged/sg27_station5_intensity_rgb_20.pkl']
+    test_set=['sg27_station4_intensity_rgb','bildstein_station1_xyz_intensity_rgb']
+    train_list,test_list=get_semantic3d_block_train_test_list(test_set)
+    train_list=['data/Semantic3D.Net/block/sampled/'+fn for fn in train_list]
+    test_list=['data/Semantic3D.Net/block/sampled/'+fn for fn in test_list]
     read_fn=lambda model,filename: read_pkl(filename)
     train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
     test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
@@ -312,5 +310,6 @@ def eval():
 
 
 if __name__=="__main__":
+    FLAGS=parser()
     if FLAGS.eval: eval()
     else: train()

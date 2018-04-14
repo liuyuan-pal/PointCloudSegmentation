@@ -783,13 +783,13 @@ def classifier_v3(feats, pfeats, is_training, num_classes, reuse=False, use_bn=F
             class_mlp1 = tf.contrib.layers.conv2d(
                 feats, num_outputs=512, scope='class_mlp1',normalizer_params=normalizer_params)
             class_mlp1=tf.concat([class_mlp1, pfeats], axis=3)
-            class_mlp1 = tf.cond(is_training, lambda: tf.nn.dropout(class_mlp1, 0.5), lambda: class_mlp1)
+            class_mlp1 = tf.cond(is_training, lambda: tf.nn.dropout(class_mlp1, 0.7), lambda: class_mlp1)
 
             normalizer_params['scope']='class_mlp2_bn'
             class_mlp2 = tf.contrib.layers.conv2d(
                 class_mlp1, num_outputs=256, scope='class_mlp2',normalizer_params=normalizer_params)
             class_mlp2=tf.concat([class_mlp2, pfeats], axis=3)
-            class_mlp2=tf.cond(is_training,lambda:tf.nn.dropout(class_mlp2,0.5),lambda:class_mlp2)
+            class_mlp2=tf.cond(is_training,lambda:tf.nn.dropout(class_mlp2,0.7),lambda:class_mlp2)
 
             logits = tf.contrib.layers.conv2d(
                 class_mlp2, num_outputs=num_classes, scope='class_mlp3',activation_fn=None,normalizer_fn=None)

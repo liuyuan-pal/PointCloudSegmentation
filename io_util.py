@@ -256,6 +256,27 @@ def get_semantic3d_testset():
     return fns,pns
 
 
+def semantic3d_read_train_block_list():
+    with open('cached/semantic3d_train_pkl.txt', 'r') as f:
+        fs = [line.strip('\n') for line in f.readlines()]
+    return fs
+
+def get_semantic3d_block_train_test_list(
+        test_stems=('sg28_station4_intensity_rgb','untermaederbrunnen_station3_xyz_intensity_rgb')
+):
+    train_list,test_list=[],[]
+    fss=semantic3d_read_train_block_list()
+    for fs in fss:
+        stem='_'.join(fs.split('_')[-2])
+        if stem in test_stems:
+            if fs.endswith('0.pkl'):
+                test_list.append(fs)
+        else:
+            train_list.append(fs)
+
+    return train_list,test_list
+
+
 def test_data_iter():
     from provider import Provider,default_unpack_feats_labels
     from draw_util import output_points,get_class_colors

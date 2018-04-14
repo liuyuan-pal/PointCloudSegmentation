@@ -58,9 +58,9 @@ def build_session():
     return sess, pls, ops, feed_dict
 
 
-def eval_room_probs(fn,sess,pls,ops,feed_dict):
+def eval_room_probs(fn,sess,pls,ops,feed_dict,ri):
     all_xyzs, all_lbls, all_probs = [], [], []
-    all_feed_in=read_pkl('data/Semantic3D.Net/block/test_{}/'.format(FLAGS.rotation_index)+fn+'.pkl')
+    all_feed_in=read_pkl('data/Semantic3D.Net/block/test_{}/'.format(ri)+fn+'.pkl')
     for i in xrange(len(all_feed_in[0])):
         cur_feed_in=[[fi[i]] for fi in all_feed_in]
         block_min=all_feed_in[4][i]
@@ -74,9 +74,7 @@ def eval_room_probs(fn,sess,pls,ops,feed_dict):
 
 
 def interpolate(sxyzs,sprobs,qxyzs,ratio=1.0/(2*0.125*0.125)):
-    bg=time.time()
     nidxs=libPointUtil.findNeighborInAnotherCPU(sxyzs,qxyzs,0.125)
-    print 'search done {} s'.format(time.time()-bg)
     nidxs_lens=np.asarray([len(idxs) for idxs in nidxs],dtype=np.int32)
     nidxs_bgs=compute_nidxs_bgs(nidxs_lens)
     nidxs=np.concatenate(nidxs,axis=0)
@@ -85,60 +83,83 @@ def interpolate(sxyzs,sprobs,qxyzs,ratio=1.0/(2*0.125*0.125)):
     return qprobs
 
 
-if __name__=="__main__":
+def interpolate_scene(qxyzs,sxyzs,sprobs):
+    qn=qxyzs.shape[0]
+    rn=1000000
+    qrn=qn/rn
+    if qn%rn!=0: qrn+=1
+    print 'qrn {} sxyzs num {}'.format(qrn,sxyzs.shape[0])
+
+    sxyzs=np.ascontiguousarray(sxyzs)
+    qxyzs=np.ascontiguousarray(qxyzs)
+    sprobs=np.ascontiguousarray(sprobs)
+
+    qprobs=[]
+    for t in xrange(qrn):
+        beg_idxs=t*rn
+        end_idxs=min((t+1)*rn,qn)
+        bg=time.time()
+        qrprobs=interpolate(sxyzs,sprobs,qxyzs[beg_idxs:end_idxs])
+        print 'interpolate {} done cost {} s'.format(t,time.time()-bg)
+        qprobs.append(qrprobs)
+
+    qprobs=np.concatenate(qprobs,axis=0)
+    qpreds=np.argmax(qprobs[:,1:],axis=1)+1
+
+    return qpreds
+
+
+def interpolate_probs():
     fns,pns=get_semantic3d_testset()
-
-    sess, pls, ops, feed_dict=build_session()
-    all_preds,all_labels=[],[]
     for fn,pn in zip(fns,pns):
-        begin=time.time()
-        sxyzs,slbls,sprobs=eval_room_probs(fn,sess,pls,ops,feed_dict)
+        points, labels = read_room_pkl('data/Semantic3D.Net/pkl/test/' + fn + '.pkl')
+        qxyzs = np.ascontiguousarray(points[:, :3], np.float32)
+        sxyzs,sprobs=[],[]
+        for t in xrange(6):
+        # for t in [3]:
+            sxyz,sprob=read_pkl('data/Semantic3D.Net/result/{}_{}.pkl'.format(fn,t))
+            sxyzs.append(sxyz)
+            sprobs.append(sprob)
 
-        points,labels=read_room_pkl('data/Semantic3D.Net/pkl/test/'+fn+'.pkl')
-        qxyzs=np.ascontiguousarray(points[:,:3],np.float32)
-        qxyzs=rotate(qxyzs,np.pi/12.*FLAGS.rotation_index)
-        qxyzs=np.ascontiguousarray(qxyzs,np.float32)
+        sxyzs=np.concatenate(sxyzs,axis=0)
+        sprobs=np.concatenate(sprobs,axis=0)
+        # sxyzs=sxyzs[0]
+        # sprobs=sprobs[0]
 
-        sxyzs=np.ascontiguousarray(sxyzs,np.float32)
-
-        qn=qxyzs.shape[0]
-        rn=1000000
-        qrn=qn/rn
-        if qn%rn!=0: qrn+=1
-        print 'qrn {} sxyzs num {}'.format(qrn,sxyzs.shape[0])
-
-        qprobs=[]
-        for t in xrange(qrn):
-            beg_idxs=t*rn
-            end_idxs=min((t+1)*rn,qn)
-            qrprobs=interpolate(sxyzs,sprobs,qxyzs[beg_idxs:end_idxs])
-            print 'interpolate {} done'.format(t)
-            qprobs.append(qrprobs)
-
-        qprobs=np.concatenate(qprobs,axis=0)
-        qpreds=np.argmax(qprobs[:,1:],axis=1)+1
-
-        colors=get_semantic3d_class_colors()
-        spreds=np.argmax(sprobs[:,1:],axis=1)+1
-
-        save_pkl('data/Semantic3D.Net/result/{}_{}_probs.pkl'.format(fn,FLAGS.rotation_index),qprobs)
-
-        print 'total cost {} s'.format(time.time() - begin)
+        spreds = np.argmax(sprobs[:, 1:], axis=1) + 1
+        qpreds=interpolate_scene(qxyzs, sxyzs, sprobs)
 
         with open('data/Semantic3D.Net/{}.labels'.format(fn),'w') as f:
-            for p in qpreds:
-                f.write('{}\n'.format(p))
+            for pred in qpreds:
+                f.write('{}\n'.format(pred))
 
-        idxs=libPointUtil.gridDownsampleGPU(sxyzs,0.1,False)
-        sxyzs=sxyzs[idxs]
-        spreds=spreds[idxs]
-        output_points('test_result/{}_sparse.txt'.format(fn),sxyzs,colors[spreds,:])
-        idxs=libPointUtil.gridDownsampleGPU(qxyzs,0.1,False)
-        qxyzs=qxyzs[idxs]
-        qpreds=qpreds[idxs]
-        output_points('test_result/{}_dense.txt'.format(fn),qxyzs,colors[qpreds,:])
+        # output
+        colors = get_semantic3d_class_colors()
+        idxs = libPointUtil.gridDownsampleGPU(sxyzs, 0.1, False)
+        sxyzs = sxyzs[idxs]
+        spreds = spreds[idxs]
+        output_points('test_result/{}_sparse.txt'.format(fn), sxyzs, colors[spreds, :])
+        idxs = libPointUtil.gridDownsampleGPU(qxyzs, 0.1, False)
+        qxyzs = qxyzs[idxs]
+        qpreds = qpreds[idxs]
+        output_points('test_result/{}_dense.txt'.format(fn), qxyzs, colors[qpreds, :])
 
 
+def predict_block():
+    fns,pns=get_semantic3d_testset()
+    sess, pls, ops, feed_dict=build_session()
+    # ri=FLAGS.rotation_index
+    for ri in xrange(6):
+        for fn,pn in zip(fns,pns):
+            bg=time.time()
+            sxyzs,slbls,sprobs=eval_room_probs(fn,sess,pls,ops,feed_dict,ri)
+            # rotate back
+            sxyzs=rotate(sxyzs,-np.pi/12.*ri)
+            sxyzs=np.ascontiguousarray(sxyzs,np.float32)
+            print '{} done cost {} s'.format(fn,time.time()-bg)
+            # save
+            save_pkl('data/Semantic3D.Net/result/{}_{}.pkl'.format(fn,ri),[sxyzs,sprobs])
 
 
-
+if __name__=="__main__":
+    predict_block()
