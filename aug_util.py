@@ -24,8 +24,8 @@ def swap_xy(points):
 def rotate(xyz,rotation_angle):
     cosval = np.cos(rotation_angle)
     sinval = np.sin(rotation_angle)
-    rotation_matrix = np.array([[cosval, -sinval, 0],
-                                [sinval, cosval,  0],
+    rotation_matrix = np.array([[cosval, sinval, 0],
+                                [-sinval, cosval,  0],
                                 [      0,      0, 1]],dtype=np.float32)
     xyz=np.dot(xyz,rotation_matrix)
     return xyz

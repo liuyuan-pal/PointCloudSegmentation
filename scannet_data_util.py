@@ -143,22 +143,22 @@ if __name__=="__main__":
     #         f.write('{}\n'.format(fn))
 
 
-    import cPickle
-    with open('data/ScanNet/scannet_test.pickle','rb') as f:
-        pts=cPickle.load(f)
-        lbls=cPickle.load(f)
-
-    save_pkl('data/ScanNet/scannet_test.pkl',[pts,lbls])
+    # import cPickle
+    # with open('data/ScanNet/scannet_test.pickle','rb') as f:
+    #     pts=cPickle.load(f)
+    #     lbls=cPickle.load(f)
+    #
+    # save_pkl('data/ScanNet/scannet_test.pkl',[pts,lbls])
 
     # process_test_data()
     # process_test_data()
-    # classes_count=np.zeros(21)
-    # for i in xrange(6):
-    #     points,labels=read_pkl('data/ScanNet/split/train_split_{}.pkl'.format(i))
-    #     for t in xrange(len(labels)):
-    #         cur_count,_=np.histogram(labels[t],np.arange(22))
-    #         classes_count+=cur_count
-    # from io_util import get_scannet_class_names
-    # names=get_scannet_class_names()
-    # for name,count in zip(names,classes_count):
-    #     print '{}: {}'.format(name,count)
+    classes_count=np.zeros(21)
+    for i in xrange(6):
+        points,labels=read_pkl('data/ScanNet/split/train_split_{}.pkl'.format(i))
+        for t in xrange(len(labels)):
+            cur_count,_=np.histogram(labels[t],np.arange(22))
+            classes_count+=cur_count
+    from io_util import get_scannet_class_names
+    names=get_scannet_class_names()
+    for name,count in zip(names,classes_count):
+        print '{}: {}'.format(name,count)

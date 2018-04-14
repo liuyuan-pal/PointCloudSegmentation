@@ -62,6 +62,7 @@ void neighborSumFeatGatherGPU(
     gpuErrchk(cudaMemset(d_ogfeats_sum,0,pn*fd*sizeof(FLT_TYPE)))
     sumFeatGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>
             (d_ifeats,d_nidxs_lens,d_nidxs_bgs,fd,pn,d_ogfeats_sum);
+    gpuErrchk(cudaGetLastError())
 }
 
 
@@ -110,6 +111,7 @@ void neighborSumFeatScatterGPU(
     dim3 thread_dim(tdim0,tdim1,tdim2);
 
     sumFeatScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_igfeats_sum,d_icidxs,fd,csum,d_osfeats);
+    gpuErrchk(cudaGetLastError())
 }
 
 

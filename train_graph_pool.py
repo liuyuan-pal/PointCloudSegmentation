@@ -7,7 +7,7 @@ import tensorflow as tf
 from model import graph_conv_pool_edge_shallow_v2,classifier_v3,graph_probs_diffusion
 from train_util import *
 from io_util import get_block_train_test_split_ds,get_class_names,\
-    get_block_train_test_split,get_semantic3d_block_train_test_split,read_pkl
+    get_block_train_test_split,get_semantic3d_block_train_list,read_pkl
 from provider import Provider,default_unpack_feats_labels
 from draw_util import output_points,get_class_colors
 from functools import partial

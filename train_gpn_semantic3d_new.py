@@ -6,7 +6,8 @@ import os
 import tensorflow as tf
 from model_pooling import points_pooling_two_layers,graph_conv_pool_edge_simp_2layers,classifier_v3
 from train_util import *
-from io_util import get_semantic3d_block_train_test_split,read_pkl,get_semantic3d_class_names,read_fn_hierarchy,save_pkl
+from io_util import get_semantic3d_block_train_list,read_pkl,get_semantic3d_class_names,read_fn_hierarchy,\
+    save_pkl,get_semantic3d_block_test_list
 from provider import Provider,default_unpack_feats_labels
 from draw_util import output_points,get_semantic3d_class_colors
 from functools import partial
@@ -25,10 +26,10 @@ parser.add_argument('--restore',type=bool, default=False, help='')
 parser.add_argument('--restore_epoch', type=int, default=0, help='')
 parser.add_argument('--restore_model', type=str, default='', help='')
 
-parser.add_argument('--log_step', type=int, default=120, help='')
-parser.add_argument('--train_dir', type=str, default='train/semantic_edge_2layer', help='')
-parser.add_argument('--save_dir', type=str, default='model/semantic_edge_2layer', help='')
-parser.add_argument('--log_file', type=str, default='semantic_edge_2layer.log', help='')
+parser.add_argument('--log_step', type=int, default=240, help='')
+parser.add_argument('--train_dir', type=str, default='train/semantic_edge_2layer_v2', help='')
+parser.add_argument('--save_dir', type=str, default='model/semantic_edge_2layer_v2', help='')
+parser.add_argument('--log_file', type=str, default='semantic_edge_2layer_v2.log', help='')
 
 
 parser.add_argument('--eval',type=bool, default=False, help='')
@@ -49,9 +50,9 @@ def tower_loss(xyzs, feats, labels, is_training,reuse=False):
 
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         xyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
-            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.6,voxel_size2=1.8,block_size=20.0)
-        global_feats,local_feats,_=graph_conv_pool_edge_simp_2layers(xyzs, dxyzs, feats, vlens, vbegs, vcens,
-                                                                     [0.6, 1.8], 20.0, [0.4,1.2,3.6], reuse)
+            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.25,voxel_size2=1.0,block_size=10.0)
+        global_feats,local_feats,ops=graph_conv_pool_edge_simp_2layers(xyzs, dxyzs, feats, vlens, vbegs, vcens,
+                                                                       [0.25, 1.0], 10.0, [0.25,0.5,2.0], reuse)
 
         global_feats_exp=tf.expand_dims(global_feats,axis=0)
         local_feats_exp=tf.expand_dims(local_feats,axis=0)
@@ -65,7 +66,7 @@ def tower_loss(xyzs, feats, labels, is_training,reuse=False):
     loss=tf.losses.sparse_softmax_cross_entropy(labels_flatten,flatten_logits,weights=weights)
     tf.summary.scalar(loss.op.name,loss)
 
-    return loss,flatten_logits,labels_flatten,global_feats
+    return loss,flatten_logits,labels_flatten
 
 
 def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
@@ -87,18 +88,16 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
         tower_losses=[]
         tower_logits=[]
         tower_labels=[]
-        tower_feats=[]
         for i in range(FLAGS.num_gpus):
             with tf.device('/gpu:{}'.format(i)):
                 with tf.name_scope('tower_{}'.format(i)):
-                    loss,logits,label,global_feats=tower_loss(xyzs[i], feats[i], labels[i], is_training, reuse)
+                    loss,logits,label=tower_loss(xyzs[i], feats[i], labels[i], is_training, reuse)
 
                     grad=opt.compute_gradients(loss)
                     tower_grads.append(grad)
                     tower_losses.append(loss)
                     tower_logits.append(logits)
                     tower_labels.append(label)
-                    tower_feats.append(global_feats)
                     update_op = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
                     summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
                     reuse=True
@@ -111,7 +110,6 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
 
         total_loss_op=tf.add_n(tower_losses)/FLAGS.num_gpus
         tower_labels=tf.concat(tower_labels,axis=0)
-        tower_feats=tf.concat(tower_feats,axis=0)
 
         logits_op=tf.concat(tower_logits,axis=0)
         preds_op=tf.argmax(logits_op,axis=1)
@@ -125,13 +123,15 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
         ops['summary']=summary_op
         ops['global_step']=global_step
         ops['labels']=tower_labels
-        ops['feats']=tower_feats
+        ops['learning_rate']=lr
 
     return ops
 
 
 def fill_feed_dict(feed_in,feed_dict,pls,num_gpus):
-    xyzs, rgbs, covars, lbls = default_unpack_feats_labels(feed_in, num_gpus)
+    cur_data = default_unpack_feats_labels(feed_in, num_gpus)
+    if len(cur_data)==4: xyzs, rgbs, covars, lbls = cur_data
+    else: xyzs, rgbs, covars, lbls, _ = cur_data
 
     cur_data=xyzs, rgbs, covars, lbls
     save_pkl('cur_data.pkl',cur_data)
@@ -160,23 +160,22 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
         feed_dict[pls['is_training']]=True
         total_block+=FLAGS.num_gpus
 
-        _,loss_val,logits,batch_labels=\
-            sess.run([ops['apply_grad'],ops['total_loss'],ops['logits'],ops['labels']],feed_dict)
+        _,loss_val,logits,batch_labels,lr=\
+            sess.run([ops['apply_grad'],ops['total_loss'],ops['logits'],ops['labels'],ops['learning_rate']],feed_dict)
         total_losses.append(loss_val)
         preds=np.argmax(logits[:,1:],axis=1)+1
         total_correct+=np.sum((batch_labels!=0)&(batch_labels==preds))
         total_points+=batch_pt_num-np.sum(batch_labels==0)
-        # print np.mean(feats,axis=0)
-        # exit(0)
 
         if i % FLAGS.log_step==0:
             summary,global_step=sess.run(
                 [ops['summary'],ops['global_step']],feed_dict)
 
-            log_str('epoch {} step {} loss {:.5} acc {:.5} | {:.5} examples/s'.format(
+            log_str('epoch {} step {} loss {:.5} acc {:.5} | {:.5} examples/s lr {:.5}'.format(
                 epoch_num,i,np.mean(np.asarray(total_losses)),
-                float(total_correct)/total_points,
-                float(total_block)/(time.time()-begin_time)
+                float(total_correct+1)/(total_points+1),
+                float(total_block)/(time.time()-begin_time),
+                lr
             ),FLAGS.log_file)
 
             summary_writer.add_summary(summary,global_step)
@@ -185,8 +184,8 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
             total_losses=[]
 
         # the generated training set is too large
-        # so every 12000 examples we test once and save the model
-        if i>3000:
+        # so every 20000 examples we test once and save the model
+        if i>5000:
             break
 
     log_str('epoch {} cost {} s'.format(epoch_num, time.time()-epoch_begin), FLAGS.log_file)
@@ -242,9 +241,13 @@ def build_placeholder(num_gpus):
 
 
 def train():
-    train_list,test_list=get_semantic3d_block_train_test_split()
+    test_set=['sg27_station5_intensity_rgb','sg27_station9_intensity_rgb']
+    train_list,_=get_semantic3d_block_train_list(test_set)
+    _,test_list=get_semantic3d_block_test_list(test_set)
     train_list=['data/Semantic3D.Net/block/sampled/merged/'+fn for fn in train_list]
-    test_list=['data/Semantic3D.Net/block/sampled/merged/'+fn for fn in test_list]
+    test_list=['data/Semantic3D.Net/block/sampled/merged_test/'+fn for fn in test_list]
+    # train_list=['data/Semantic3D.Net/block/sampled/merged/sg27_station5_intensity_rgb_20.pkl']
+    # test_list=['data/Semantic3D.Net/block/sampled/merged/sg27_station5_intensity_rgb_20.pkl']
     read_fn=lambda model,filename: read_pkl(filename)
     train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
     test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
@@ -279,8 +282,9 @@ def train():
 
 
 def eval():
-    train_list,test_list=get_semantic3d_block_train_test_split()
-    test_list=['data/Semantic3D.Net/block/sampled/test/'+fn for fn in test_list]
+    train_list,_=get_semantic3d_block_train_list()
+    _,test_list=get_semantic3d_block_test_list()
+    test_list=['data/Semantic3D.Net/block/sampled/merged_test/'+fn for fn in test_list]
     read_fn=lambda model,filename: read_pkl(filename)
 
     test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)

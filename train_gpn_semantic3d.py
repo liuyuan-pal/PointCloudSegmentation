@@ -6,7 +6,7 @@ import os
 import tensorflow as tf
 from model import graph_conv_pool_v7_nosum_lpmiu,classifier_v3
 from train_util import *
-from io_util import get_semantic3d_block_train_test_split,read_pkl,get_semantic3d_class_names,read_fn_hierarchy
+from io_util import get_semantic3d_block_train_list,read_pkl,get_semantic3d_class_names,read_fn_hierarchy
 from provider import Provider,default_unpack_feats_labels
 from draw_util import output_points,get_semantic3d_class_colors
 from functools import partial
@@ -287,7 +287,7 @@ def build_placeholder(num_gpus):
 
 
 def train():
-    train_list,test_list=get_semantic3d_block_train_test_split()
+    train_list,test_list=get_semantic3d_block_train_list()
     train_list=['data/Semantic3D.Net/block/sampled/train_merge/{}.pkl'.format(i) for i in xrange(225)]
     test_list=['data/Semantic3D.Net/block/sampled/test/'+fn for fn in test_list]
     read_fn=lambda model,filename: read_pkl(filename)
@@ -330,7 +330,7 @@ def train():
 
 
 def eval():
-    train_list,test_list=get_semantic3d_block_train_test_split()
+    train_list,test_list=get_semantic3d_block_train_list()
     test_list=['data/Semantic3D.Net/block/sampled/test/'+fn for fn in test_list]
     read_fn=lambda model,filename: read_pkl(filename)
 

@@ -1,5 +1,5 @@
 import tensorflow as tf
-from model_pooling import graph_conv_pool_edge_simp_v2,classifier_v3,points_pooling
+from model_pooling import graph_conv_pool_edge_simp_2layers,classifier_v3,points_pooling_two_layers
 from train_graph_pool import neighbor_anchors_v2
 from io_util import read_pkl,get_block_train_test_split,read_room_pkl,get_class_names
 from aug_util import compute_nidxs_bgs
@@ -19,10 +19,10 @@ FLAGS = parser.parse_args()
 
 
 def build_network(xyzs, feats, labels, is_training, reuse=False):
-
-    xyzs, pxyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
-        points_pooling(xyzs,feats,labels,voxel_size=0.3,block_size=3.0)
-    global_feats,local_feats,_=graph_conv_pool_edge_simp_v2(xyzs, dxyzs, pxyzs, feats, vlens, vbegs, vcens, 0.3, 3.0, reuse)
+    xyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
+        points_pooling_two_layers(xyzs, feats, labels, voxel_size1=0.15, voxel_size2=0.3, block_size=3.0)
+    global_feats,local_feats,_=graph_conv_pool_edge_simp_2layers(xyzs, dxyzs, feats, vlens, vbegs, vcens,
+                                                                 [0.15,0.3], 3.0, [0.15,0.3,0.5], reuse)
 
     global_feats=tf.expand_dims(global_feats,axis=0)
     local_feats=tf.expand_dims(local_feats,axis=0)
@@ -37,7 +37,7 @@ def build_network(xyzs, feats, labels, is_training, reuse=False):
     ops['logits']=flatten_logits
     ops['preds']=preds
     ops['labels']=labels
-    ops['xyzs']=xyzs
+    ops['xyzs']=xyzs[0]
     return ops
 
 def build_session():

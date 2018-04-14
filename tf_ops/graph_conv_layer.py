@@ -671,7 +671,7 @@ def graph_conv_edge_simp(sxyzs, feats, ifn, ifc_dims, ofc_dims, ofn, nidxs, nidx
             sfeats=tf.concat([cfeats,sfeats],axis=1)
 
         ew=tf.contrib.layers.fully_connected(sfeats, num_outputs=ifn, scope='{}_fc_ew'.format(name),
-                                             activation_fn=None, reuse=reuse)
+                                             activation_fn=tf.nn.tanh, reuse=reuse)
 
         feats=neighbor_ops.neighbor_scatter(feats, nidxs, nidxs_lens, nidxs_bgs, use_diff=False)      # [en,ifn]
         feats=ew*feats
@@ -701,7 +701,7 @@ def graph_conv_edge_xyz_simp(sxyzs, ifn, ifc_dims, ofc_dims, ofn, nidxs, nidxs_l
             dim_sum+=fd
 
         ew=tf.contrib.layers.fully_connected(sfeats, num_outputs=dim_sum, scope='{}_fc_ew'.format(name),
-                                             activation_fn=None, reuse=reuse)
+                                             activation_fn=tf.nn.tanh, reuse=reuse)
 
         feats=ew*sfeats                                                                               # [en,ifn]
         # we need to embed the edge-conditioned feature to avoid signal mixed up

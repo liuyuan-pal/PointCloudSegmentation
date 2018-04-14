@@ -320,7 +320,7 @@ resample_ratio_high = 1.0
 covar_ds_stride = 0.05
 covar_nn_size = 0.2
 max_pt_num = 10240
-from io_util import read_fn_hierarchy,get_semantic3d_block_train_test_split,save_pkl
+from io_util import read_fn_hierarchy,get_semantic3d_block_train_list,save_pkl
 
 def semantic3d_process_block(filename,
                              use_rescale=False,
@@ -353,10 +353,10 @@ def semantic3d_process_block(filename,
 
     return cxyzs,dxyzs,rgbs,covars,lbls,vlens,vlens_bgs,vcidxs,cidxs,nidxs,nidxs_bgs,nidxs_lens,block_mins
 
-sample_stride=0.2
-block_size=20
-block_stride=10
-min_point_num=512
+sample_stride=0.125
+block_size=10.0
+block_stride=5.0
+min_point_num=128
 covar_sample_stride=0.05
 covar_neighbor_radius=0.2
 
@@ -412,7 +412,8 @@ def semantic3d_process_block_v2(filename):
     points,labels=read_room_pkl(filename) # [n,6],[n,1]
     xyzs, rgbs, covars, lbls=sample_block(points,labels,sample_stride,block_size,block_stride,min_pn=min_point_num,
                                           use_rescale=True,use_flip=True,use_rotate=False,
-                                          covar_ds_stride=covar_sample_stride,covar_nn_size=covar_neighbor_radius,gpu_gather=True)
+                                          covar_ds_stride=covar_sample_stride,covar_nn_size=covar_neighbor_radius,
+                                          gpu_gather=True)
     # normalize rgbs
     xyzs, rgbs, covars, lbls=normalize_semantic3d_block(xyzs,rgbs,covars,lbls,block_size,
                                                         resample=True,resample_low=0.8,resample_high=1.0,
@@ -422,12 +423,7 @@ def semantic3d_process_block_v2(filename):
 
 def semantic3d_sample_single_file_training_block(tfs):
     fs='data/Semantic3D.Net/block/train/'+tfs
-    out_data=[[] for _ in xrange(4)]
-    # for i in xrange(3):
     data=semantic3d_process_block_v2(fs)
-
-        # for t in xrange(4):
-        #     out_data[t]+=data[t]
 
     save_pkl('data/Semantic3D.Net/block/sampled/train/'+tfs,data)
     print '{} done'.format(tfs)
@@ -642,7 +638,7 @@ def modelnet_dataset_to_block():
     #     print '{} done'.format(fi)
 
 def semantic_read_pkl():
-    train_list,test_list=get_semantic3d_block_train_test_split()
+    train_list,test_list=get_semantic3d_block_train_list()
     train_list=['data/Semantic3D.Net/block/sampled/merged/'+fn for fn in train_list]
     test_list=['data/Semantic3D.Net/block/sampled/merged/'+fn for fn in test_list]
     train_list+=test_list
@@ -672,7 +668,9 @@ def semantic_read_pkl():
     print label_count
     print max_label,min_label
 
+
+
 if __name__=="__main__":
-    # semantic3d_sample_training_block()
+    semantic3d_sample_training_block()
     # read_pkl('domfountain_station3_xyz_intensity_rgb_14_3.pkl')
-    semantic_read_pkl()
+    # semantic_read_pkl()

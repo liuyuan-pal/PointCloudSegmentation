@@ -210,7 +210,7 @@ def get_semantic3d_class_names():
     return ['unknown','man-made terrain','natural terrain','high vegetation',
             'low vegetation','buildings','hard scape','scanning artefacts','cars']
 
-def get_semantic3d_block_train_test_split(
+def get_semantic3d_block_train_list(
         test_stems=('sg28_station4_intensity_rgb','untermaederbrunnen_station3_xyz_intensity_rgb')
 ):
     train_list,test_list=[],[]
@@ -228,12 +228,23 @@ def get_semantic3d_block_train_test_split(
 
     return train_list,test_list
 
+def get_semantic3d_block_test_list(
+        test_stems=('sg28_station4_intensity_rgb','untermaederbrunnen_station3_xyz_intensity_rgb')
+):
+    train_list,test_list=[],[]
+    path = os.path.split(os.path.realpath(__file__))[0]
+    with open(path+'/cached/semantic3d_merged_test.txt','r') as f:
+        for line in f.readlines():
+            line=line.strip('\n')
+            stem=line.split(' ')[0]
+            num=int(line.split(' ')[1])
+            # print stem
+            if stem in test_stems:
+                test_list+=[stem+'_{}.pkl'.format(i) for i in xrange(num)]
+            else:
+                train_list+=[stem+'_{}.pkl'.format(i) for i in xrange(num)]
 
-def get_semantic3d_all_block():
-    with open('cached/semantic3d_train_pkl.txt','r') as f:
-        fs=[line.strip('\n') for line in f.readlines()]
-    return fs
-
+    return train_list,test_list
 
 
 def get_semantic3d_testset():
@@ -509,7 +520,7 @@ def test_hierarchy_speed():
 def test_semantic_hierarchy():
     from provider import Provider,default_unpack_feats_labels
     from functools import partial
-    train_list,test_list=get_semantic3d_block_train_test_split()
+    train_list,test_list=get_semantic3d_block_train_list()
     train_list=['data/Semantic3D.Net/block/train/'+fn for fn in train_list]
     test_list=['data/Semantic3D.Net/block/train/'+fn for fn in test_list]
 
@@ -601,7 +612,7 @@ def test_semantic_hierarchy_speed():
 
 def test_semantic_read_pkl():
     from provider import Provider,default_unpack_feats_labels
-    train_list,test_list=get_semantic3d_block_train_test_split()
+    train_list,test_list=get_semantic3d_block_train_list()
     train_list=['data/Semantic3D.Net/block/sampled/train_merge/{}.pkl'.format(i) for i in xrange(231)]
     test_list=['data/Semantic3D.Net/block/sampled/test/'+fn for fn in test_list]
     simple_read_fn=lambda model,filename: read_pkl(filename)
@@ -876,7 +887,7 @@ def test_read_s3dis_dataset():
 
 def test_read_semantic_dataset():
     from provider import Provider,default_unpack_feats_labels
-    train_list,test_list=get_semantic3d_block_train_test_split()
+    train_list,test_list=get_semantic3d_block_train_list()
     # print train_list
     # exit(0)
     train_list=['data/Semantic3D.Net/block/sampled/merged/'+fn for fn in train_list]
@@ -908,8 +919,9 @@ if __name__ =="__main__":
     # data=read_pkl('data/ModelNet40/ply_data_test1.pkl')
     # print len(data)
     # test_read_semantic_dataset()
-    cxyzs, rgbs, covars, lbls=read_pkl('cur_data.pkl')
+    cxyzs, rgbs, covars, lbls=read_pkl('tmp_data.pkl')
     for i in xrange(4):
         print np.min(lbls[i]),np.max(lbls[i])
         print np.min(cxyzs[i],axis=0),np.max(cxyzs[i],axis=0)
         print np.min(rgbs[i],axis=0),np.max(rgbs[i],axis=0)
+        output_points('test_result/tmp{}.txt'.format(i),cxyzs[i],rgbs[i][:,:3]*127+128)
