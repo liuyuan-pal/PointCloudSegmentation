@@ -5,6 +5,7 @@ TF_LIB=$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_lib())')
 
 /usr/local/cuda/bin/nvcc PoolingIndex/ComputeDiffXYZ.cu -o build/ComputeDiffXYZ.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
 /usr/local/cuda/bin/nvcc PoolingIndex/ComputeVoxelIdx.cu -o build/ComputeVoxelIdx.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
+/usr/local/cuda/bin/nvcc PoolingIndex/ComputeVoxelLabel.cu -o build/ComputeVoxelLabel.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
 /usr/local/cuda/bin/nvcc PoolingIndex/PermutateFeature.cu -o build/PermutateFeature.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
 /usr/local/cuda/bin/nvcc PoolingIndex/SearchNeighborhood.cu -o build/SearchNeighborhood.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
 /usr/local/cuda/bin/nvcc PoolingIndex/ComputePermutationInfo.cu -o build/ComputePermutationInfo.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2

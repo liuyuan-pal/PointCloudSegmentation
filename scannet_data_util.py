@@ -152,13 +152,29 @@ if __name__=="__main__":
 
     # process_test_data()
     # process_test_data()
-    classes_count=np.zeros(21)
-    for i in xrange(6):
-        points,labels=read_pkl('data/ScanNet/split/train_split_{}.pkl'.format(i))
-        for t in xrange(len(labels)):
-            cur_count,_=np.histogram(labels[t],np.arange(22))
-            classes_count+=cur_count
-    from io_util import get_scannet_class_names
-    names=get_scannet_class_names()
-    for name,count in zip(names,classes_count):
-        print '{}: {}'.format(name,count)
+
+    # classes_count=np.zeros(21)
+    # for i in xrange(6):
+    #     points,labels=read_pkl('data/ScanNet/split/train_split_{}.pkl'.format(i))
+    #     for t in xrange(len(labels)):
+    #         cur_count,_=np.histogram(labels[t],np.arange(22))
+    #         classes_count+=cur_count
+    # from io_util import get_scannet_class_names
+    # names=get_scannet_class_names()
+    # for name,count in zip(names,classes_count):
+    #     print '{}: {}'.format(name,count)
+
+    with open('cached/scannet_train_filenames.txt','r') as f:
+        train_list=[line.strip('\n') for line in f.readlines()]
+
+    train_list=['data/ScanNet/sampled_train/{}'.format(fn) for fn in train_list]
+    test_list=['data/ScanNet/sampled_test/test_{}.pkl'.format(i) for i in xrange(312)]
+    train_list+=test_list
+    def read_fn(model,fn):
+        data=read_pkl(fn)
+        return data[0],data[2],data[3],data[11]
+    count=0
+    for fs in train_list:
+        count+=len(read_pkl(fs)[0])
+
+    print count

@@ -118,6 +118,7 @@ void neighborMaxFeatScatterGPU(
         FLT_TYPE *d_igfeats_sum,            // [pn2,fd]
         INT_TYPE *d_igmax_idxs,             // [pn2,fd]
         INT_TYPE *vlens_bg,                 // [pn2]
+        INT_TYPE *vlens,                    // [pn2]
         INT_TYPE pn1,
         INT_TYPE pn2,
         INT_TYPE fd,

@@ -4,8 +4,7 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model_pointnet import *
-from model_pooling import *
+from model_new import *
 from train_util import *
 from io_util import get_class_names,get_block_train_test_split,read_pkl
 from provider import Provider,default_unpack_feats_labels
@@ -13,7 +12,6 @@ from draw_util import output_points,get_class_colors
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--num_gpus', type=int, default=4, help='')
-parser.add_argument('--max_gpus', type=int, default=4, help='')
 parser.add_argument('--batch_size', type=int, default=1, help='')
 
 parser.add_argument('--lr_init', type=float, default=1e-3, help='')
@@ -26,10 +24,10 @@ parser.add_argument('--restore',type=bool, default=False, help='')
 parser.add_argument('--restore_epoch', type=int, default=0, help='')
 parser.add_argument('--restore_model', type=str, default='', help='')
 
-parser.add_argument('--log_step', type=int, default=120, help='')
-parser.add_argument('--train_dir', type=str, default='train/pointnet_10_dilated', help='')
-parser.add_argument('--save_dir', type=str, default='model/pointnet_10_dilated', help='')
-parser.add_argument('--log_file', type=str, default='pointnet_10_dilated.log', help='')
+parser.add_argument('--log_step', type=int, default=1000, help='')
+parser.add_argument('--train_dir', type=str, default='train/pgnet_v2', help='')
+parser.add_argument('--save_dir', type=str, default='model/pgnet_v2', help='')
+parser.add_argument('--log_file', type=str, default='pgnet_v2.log', help='')
 parser.add_argument('--use_root', type=bool, default=False, help='')
 parser.add_argument('--use_diffusion', type=bool, default=False, help='')
 parser.add_argument('--test_subset', type=bool, default=False, help='')
@@ -48,20 +46,18 @@ train_weights=[2.80089331,2.92693353,2.94871211,5.12748384,5.07317114,
                5.26789713,3.67803526]
 train_weights=np.asarray(train_weights)
 
+
 def tower_loss(xyzs, feats, labels, is_training, reuse=False):
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         xyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
-            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.15,voxel_size2=0.45,block_size=3.0)
-        # global_feats,local_feats,_=pgnet_model_v3_bn(xyzs, dxyzs, feats, vlens, vbegs,
-        #                                              vcens, [0.15,0.45], 3.0, is_training, [0.15, 0.3, 0.9], reuse)
-        global_feats, local_feats = pointnet_10_dilated(xyzs,dxyzs,feats,vlens,vbegs,vcens,reuse)
-        # global_feats, local_feats = pgnet_model_v8(xyzs,dxyzs,feats,vlens,vbegs,vcens,reuse)
-        # labels=tf.cast(labels,tf.int64)
-        # global_feats,local_feats=naiive_pointnet(xyzs,feats)
+            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.2,voxel_size2=0.8,block_size=3.0)
+        global_feats,local_feats,_=edge_condition_diffusion_anchor_model_v2(
+            xyzs, dxyzs, feats, vlens, vbegs, vcens, [0.2, 0.8], 3.0, [0.1,0.4,1.6], reuse)
 
         global_feats=tf.expand_dims(global_feats,axis=0)
         local_feats=tf.expand_dims(local_feats,axis=0)
         logits=classifier_v3(global_feats, local_feats, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
+        # logits,xyzs,labels=pgnet_nse_whole(xyzs,feats,labels,reuse,is_training,FLAGS.num_classes)
 
         flatten_logits = tf.reshape(logits, [-1, FLAGS.num_classes])  # [pn,num_classes]
 
@@ -98,7 +94,7 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
         tower_logits=[]
         tower_labels=[]
         for i in range(FLAGS.num_gpus):
-            with tf.device('/gpu:{}'.format(i%FLAGS.max_gpus)):
+            with tf.device('/gpu:{}'.format(i%4)):
                 with tf.name_scope('tower_{}'.format(i)):
                     loss,logits,label=tower_loss(xyzs[i], feats[i], labels[i], is_training, reuse)
 
@@ -154,7 +150,7 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
 
         total_losses.append(loss_val)
         total_correct+=correct_num
-        if i % FLAGS.log_step==0:
+        if i*FLAGS.num_gpus % FLAGS.log_step==0:
             summary,global_step,lr=sess.run(
                 [ops['summary'],ops['global_step'],ops['lr']],feed_dict)
 
@@ -241,50 +237,19 @@ def build_placeholder(num_gpus):
 
 def train():
     import random
-    from aug_util import flip,swap_xy
     train_list,test_list=get_block_train_test_split()
-    train_list=['data/S3DIS/sampled_train_nolimits/'+fn for fn in train_list]
-    # train_list=['data/S3DIS/sampled_train_no_aug/'+fn for fn in train_list]
+    train_list=['data/S3DIS/sampled_train_new/'+fn for fn in train_list]
     # with open('cached/s3dis_merged_train.txt', 'r') as f:
     #     train_list=[line.strip('\n') for line in f.readlines()]
     random.shuffle(train_list)
-    test_list=['data/S3DIS/sampled_test_nolimits/'+fn for fn in test_list]
+    test_list=['data/S3DIS/sampled_test_new/'+fn for fn in test_list]
 
+    def fn(model,filename):
+        data=read_pkl(filename)
+        return data
 
-    def train_fn(model,filename):
-        xyzs, rgbs, covars, lbls, block_mins=read_pkl(filename)
-
-        num=len(xyzs)
-        for i in xrange(num):
-            # pt_num=len(xyzs[i])
-            # ds_ratio=np.random.uniform(0.8,1.0)
-            # idxs=np.random.choice(pt_num,int(ds_ratio*pt_num),False)
-            #
-            # xyzs[i]=xyzs[i][idxs]
-            # rgbs[i]=rgbs[i][idxs]
-            # covars[i]=covars[i][idxs]
-            # lbls[i]=lbls[i][idxs]
-
-            if random.random()<0.5:
-                xyzs[i]=flip(xyzs[i],axis=0)
-
-            if random.random()<0.5:
-                xyzs[i]=flip(xyzs[i],axis=1)
-
-            if random.random()<0.5:
-                xyzs[i]=swap_xy(xyzs[i])
-
-            jitter_color=np.random.uniform(-0.02,0.02,rgbs[i].shape)
-            rgbs[i]+=jitter_color
-
-        return xyzs, rgbs, covars, lbls, block_mins
-
-    def test_fn(model,filename):
-        xyzs, rgbs, covars, lbls, block_mins=read_pkl(filename)
-        return xyzs, rgbs, covars, lbls, block_mins
-
-    train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,test_fn)
-    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,test_fn)
+    train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,fn)
+    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,fn)
 
     try:
         pls=build_placeholder(FLAGS.num_gpus)
@@ -317,6 +282,7 @@ def train():
 def eval():
     train_list,test_list=get_block_train_test_split()
     test_list=['data/S3DIS/sampled_test/'+fn for fn in test_list]
+
 
     def fn(model,filename):
         data=read_pkl(filename)

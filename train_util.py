@@ -67,10 +67,11 @@ def val2iou(fp,tp,fn):
 
     return iou, miou, oiou, acc, macc, oacc
 
-def log_str(message,filename):
+def log_str(message,filename,print_message=True):
     with open(filename,'a') as f:
         f.write(message+'\n')
-    print message
+    if print_message:
+        print message
 
 
 def average_gradients(tower_grads):

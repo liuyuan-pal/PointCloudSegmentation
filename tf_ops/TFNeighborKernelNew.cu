@@ -132,11 +132,11 @@ __global__ void maxFeatGather(
     if(pi>=pn2||fi>=fd) return;
     INT_TYPE bg=vlens_bg[pi];
     INT_TYPE nn=vlens[pi];
+    if(nn==0) return;
 
     FLT_TYPE *feats_max_p=&feats_max[pi*fd+fi];
     INT_TYPE *max_idxs_p=&max_idxs[pi*fd+fi];
     FLT_TYPE *ifeats_p=&ifeats[bg*fd+fi];
-    if(nn==0) return;
 
     (*feats_max_p)=*ifeats_p;
     (*max_idxs_p)=0;
@@ -159,6 +159,7 @@ __global__ void maxFeatScatter(
         FLT_TYPE *ifeats,               // [pn2,fd]
         INT_TYPE *max_idxs,             // [pn2,fd]
         INT_TYPE *vlens_bg,             // [pn2]
+        INT_TYPE *vlens,                // [pn2]
         INT_TYPE pn2,
         INT_TYPE fd,
         FLT_TYPE *sfeats                // [pn1,fd]
@@ -167,7 +168,7 @@ __global__ void maxFeatScatter(
     int pi = threadIdx.x + blockIdx.x*blockDim.x;
     int fi = threadIdx.y + blockIdx.y*blockDim.y;
     if(pi>=pn2||fi>=fd) return;
-
+    if(vlens[pi]==0) return;
 
     INT_TYPE wpi=vlens_bg[pi]+max_idxs[pi*fd+fi];
     sfeats[wpi*fd+fi]=ifeats[pi*fd+fi];
@@ -211,6 +212,7 @@ void neighborMaxFeatScatterGPU(
         FLT_TYPE *d_igfeats_sum,            // [pn2,fd]
         INT_TYPE *d_igmax_idxs,             // [pn2,fd]
         INT_TYPE *vlens_bg,                 // [pn2]
+        INT_TYPE *vlens,                    // [pn2]
         INT_TYPE pn1,
         INT_TYPE pn2,
         INT_TYPE fd,
@@ -235,7 +237,7 @@ void neighborMaxFeatScatterGPU(
     dim3 thread_dim(tdim0,tdim1,tdim2);
 
     gpuErrchk(cudaMemset(d_osfeats,0,pn1*fd*sizeof(FLT_TYPE)))
-    maxFeatScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_igfeats_sum,d_igmax_idxs,vlens_bg,pn2,fd,d_osfeats);
+    maxFeatScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_igfeats_sum,d_igmax_idxs,vlens_bg,vlens,pn2,fd,d_osfeats);
     gpuErrchk(cudaGetLastError())
 }
 
@@ -431,7 +433,7 @@ template void neighborSumFeatScatterGPU<float,unsigned int>
 template void neighborMaxFeatGatherGPU<float,unsigned int>
         (float*, unsigned int*,unsigned int*,unsigned int,unsigned int,float*,unsigned int*);
 template void neighborMaxFeatScatterGPU<float,unsigned int>
-        (float*, unsigned int*,unsigned int*,unsigned int,unsigned int,unsigned int,float*);
+        (float*, unsigned int*,unsigned int*,unsigned int*,unsigned int,unsigned int,unsigned int,float*);
 
 template void concatNonCenterFeatScatterGPU<float,unsigned int>
         (float*, unsigned int*,unsigned int*,unsigned int*,unsigned int,unsigned int,float*);

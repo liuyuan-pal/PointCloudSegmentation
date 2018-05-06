@@ -8,7 +8,7 @@ from sklearn.cluster import KMeans
 from draw_util import output_points
 
 
-def generate_pmiu(center_num=5):
+def generate_anchor(center_num=5):
 
     if os.path.exists('cached/centers.txt'):
         with open('cached/centers.txt','r') as f:

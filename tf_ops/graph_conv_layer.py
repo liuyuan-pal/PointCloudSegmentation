@@ -4,7 +4,7 @@ path = os.path.split(os.path.realpath(__file__))[0]
 neighbor_ops=tf.load_op_library(path+'/build/libTFNeighborOps.so')
 import sys
 sys.path.append(path)
-from generate_pmiu import generate_pmiu
+from generate_pmiu import generate_anchor
 
 from tensorflow.python.framework import ops
 
@@ -41,7 +41,7 @@ def _location_weight_feat_sum_gradient(op,dlw_sum):
 
 @ops.RegisterGradient("NeighborMaxFeatGather")
 def _neighbor_max_feat_gather_gradient(op,dgfeats,dmax_idxs):
-    difeats=neighbor_ops.neighbor_max_feat_scatter(dgfeats,op.inputs[0],op.outputs[1],op.inputs[2])
+    difeats=neighbor_ops.neighbor_max_feat_scatter(dgfeats,op.inputs[0],op.outputs[1],op.inputs[2],op.inputs[1])
     return [difeats,None,None]
 
 
@@ -51,7 +51,7 @@ def _neighbor_max_feat_gather_gradient(op,dgfeats,dmax_idxs):
 #     return [difeats,None,None,None]
 
 
-def _variable_on_cpu(name, shape, initializer, use_fp16=False,init_val=None):
+def variable_on_cpu(name, shape, initializer, use_fp16=False, init_val=None, trainable=True):
     """Helper to create a Variable stored on CPU memory.
     Args:
       name: name of the variable
@@ -64,9 +64,9 @@ def _variable_on_cpu(name, shape, initializer, use_fp16=False,init_val=None):
         dtype = tf.float16 if use_fp16 else tf.float32
         if init_val is not None:
             var_init=tf.Variable(init_val,False,name='{}_init_val'.format(name),dtype=dtype, expected_shape=init_val.shape)
-            var = tf.get_variable(name, initializer=var_init.initialized_value(), dtype=dtype)
+            var = tf.get_variable(name, initializer=var_init.initialized_value(), dtype=dtype, trainable=trainable)
         else:
-            var = tf.get_variable(name, shape, initializer=initializer, dtype=dtype)
+            var = tf.get_variable(name, shape, trainable=trainable, initializer=initializer, dtype=dtype)
         # tf.add_to_collection(tf.GraphKeys.TRAINABLE_VARIABLES,var)
     return var
 
@@ -171,12 +171,12 @@ def graph_conv_xyz_feats(xyz, feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, 
                          initializer=tf.contrib.layers.xavier_initializer(),reuse=None):
 
     with tf.variable_scope(name,reuse=reuse):
-        pw=_variable_on_cpu('pw', [ifn,m,ofn], initializer)
+        pw=variable_on_cpu('pw', [ifn, m, ofn], initializer)
         if compute_lw and pmiu is None:
-                pmiu=_variable_on_cpu('pmiu', [3,m], initializer)
+                pmiu=variable_on_cpu('pmiu', [3, m], initializer)
 
         if use_bias:
-            bias=_variable_on_cpu('bias',[ofn],tf.zeros_initializer())
+            bias=variable_on_cpu('bias', [ofn], tf.zeros_initializer())
 
     with tf.name_scope(name):
         pfeats,lw_,lw_sum_=graph_conv_xyz_feats_impl(xyz,feats,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,compute_lw,lw,lw_sum,pmiu,no_sum)
@@ -200,14 +200,14 @@ def graph_conv_xyz(xyz, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, ofn,n
                    use_bias=True,activation_fn=tf.nn.relu,
                    initializer=tf.contrib.layers.xavier_initializer(),reuse=None):
     with tf.variable_scope(name,reuse=reuse):
-        pw=_variable_on_cpu('pw', [ifn,m,ofn], initializer)
+        pw=variable_on_cpu('pw', [ifn, m, ofn], initializer)
         if compute_lw and pmiu is None:
-            pmiu_init=generate_pmiu(m)
-            pmiu=_variable_on_cpu('pmiu', [3,m], initializer=None, init_val=pmiu_init)
+            pmiu_init=generate_anchor(m)
+            pmiu=variable_on_cpu('pmiu', [3, m], initializer=None, init_val=pmiu_init)
 
         if use_bias:
             bdim=ofn if not no_sum else ofn*m
-            bias=_variable_on_cpu('bias',[bdim],tf.zeros_initializer())
+            bias=variable_on_cpu('bias', [bdim], tf.zeros_initializer())
 
     with tf.name_scope(name):
         pfeats,lw_,lw_sum_=graph_conv_xyz_impl(xyz,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,compute_lw,lw,lw_sum,pmiu,no_sum)
@@ -234,10 +234,10 @@ def graph_conv_feats(feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, o
                      reuse=None):
 
     with tf.variable_scope(name,reuse=reuse):
-        pw=_variable_on_cpu('pw', [ifn,m,ofn], initializer)
+        pw=variable_on_cpu('pw', [ifn, m, ofn], initializer)
         if use_bias:
             bdim=ofn if not no_sum else ofn*m
-            bias=_variable_on_cpu('bias',[bdim],tf.zeros_initializer())
+            bias=variable_on_cpu('bias', [bdim], tf.zeros_initializer())
 
     with tf.name_scope(name):
         pfeats=graph_conv_feats_impl(feats,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,lw,lw_sum,no_sum)
@@ -257,10 +257,10 @@ def graph_diff_conv_feats(feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn,
                           reuse=None):
 
     with tf.variable_scope(name,reuse=reuse):
-        pw=_variable_on_cpu('pw', [ifn,m,ofn], initializer)
+        pw=variable_on_cpu('pw', [ifn, m, ofn], initializer)
         if use_bias:
             bdim=ofn if not no_sum else ofn*m
-            bias=_variable_on_cpu('bias',[bdim],tf.zeros_initializer())
+            bias=variable_on_cpu('bias', [bdim], tf.zeros_initializer())
 
     with tf.name_scope(name):
         pfeats=graph_diff_conv_feats_impl(feats,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,lw,lw_sum,no_sum)
@@ -313,8 +313,8 @@ def graph_neighbor_sum(ifeats,nidxs_lens,nidxs_bgs,cidxs):
 
 def graph_learn_pmiu(ifeats, m, scope, nidxs, nidxs_lens, nidxs_bgs):
     with tf.variable_scope(scope):
-        pmiu_init=generate_pmiu(m)
-        pmiu=_variable_on_cpu('pmiu', [3,m], None, init_val=pmiu_init)
+        pmiu_init=generate_anchor(m)
+        pmiu=variable_on_cpu('pmiu', [3, m], None, init_val=pmiu_init)
 
     with tf.name_scope(scope):
         sfeats = neighbor_ops.neighbor_scatter(ifeats, nidxs, nidxs_lens, nidxs_bgs, use_diff=True)
@@ -392,11 +392,11 @@ def graph_conv_xyz_v2(xyz, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m, of
                       initializer=tf.contrib.layers.xavier_initializer(),reuse=None):
 
     with tf.variable_scope(name,reuse=reuse):
-        pw =_variable_on_cpu('pw', [ifn*m,ofn], initializer)
-        pb =_variable_on_cpu('bias',[ofn],tf.zeros_initializer())
+        pw =variable_on_cpu('pw', [ifn * m, ofn], initializer)
+        pb =variable_on_cpu('bias', [ofn], tf.zeros_initializer())
         if compute_lw and pmiu is None:
-            pmiu_init=generate_pmiu(m)
-            pmiu=_variable_on_cpu('pmiu', [3,m], initializer=None, init_val=pmiu_init)
+            pmiu_init=generate_anchor(m)
+            pmiu=variable_on_cpu('pmiu', [3, m], initializer=None, init_val=pmiu_init)
 
     with tf.name_scope(name):
         pfeats,lw_,lw_sum_=graph_conv_xyz_v2_impl(xyz,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,pb,scale_val,compute_lw,lw,lw_sum,pmiu)
@@ -437,8 +437,8 @@ def graph_conv_feats_v2(feats, cidxs, nidxs, nidxs_lens, nidxs_bgs, name, ifn, m
                         activation_fn=tf.nn.relu, initializer=tf.contrib.layers.xavier_initializer(),reuse=None):
 
     with tf.variable_scope(name,reuse=reuse):
-        pw =_variable_on_cpu('pw', [ifn*m,ofn], initializer)
-        pb =_variable_on_cpu('bias',[ofn],tf.zeros_initializer())
+        pw =variable_on_cpu('pw', [ifn * m, ofn], initializer)
+        pb =variable_on_cpu('bias', [ofn], tf.zeros_initializer())
 
     with tf.name_scope(name):
         pfeats=graph_conv_feats_v2_impl(feats,cidxs,nidxs,nidxs_lens,nidxs_bgs,pw,pb,lw,lw_sum)
@@ -543,10 +543,10 @@ def graph_conv_feats_concat(feats,wlw,ifn,m,ofn,nidxs,nidxs_lens,nidxs_bgs,cidxs
 def trainable_pmiu(m,scope,is_training=True):
     with tf.variable_scope(scope):
         if is_training:
-            pmiu_init=generate_pmiu(m)
-            pmiu=_variable_on_cpu('pmiu', [3,m], None, init_val=pmiu_init)
+            pmiu_init=generate_anchor(m)
+            pmiu=variable_on_cpu('pmiu', [3, m], None, init_val=pmiu_init)
         else:
-            pmiu=_variable_on_cpu('pmiu', [3,m], tf.contrib.layers.xavier_initializer())
+            pmiu=variable_on_cpu('pmiu', [3, m], tf.contrib.layers.xavier_initializer())
 
     return pmiu
 
@@ -591,7 +591,7 @@ def graph_conv_edge(sxyzs,feats,ifn,fc_dims,ofn,nidxs,nidxs_lens,nidxs_bgs,cidxs
         feats=weights_inv*neighbor_ops.neighbor_sum_feat_gather(feats, cidxs, nidxs_lens, nidxs_bgs)  # [pn,ofn]
 
         with tf.variable_scope(name,reuse=reuse):
-            bias=_variable_on_cpu('{}_bias'.format(name),[ofn],tf.zeros_initializer())
+            bias=variable_on_cpu('{}_bias'.format(name), [ofn], tf.zeros_initializer())
 
         feats=tf.nn.bias_add(feats,bias)
 
@@ -618,7 +618,7 @@ def graph_conv_edge_xyz(sxyzs,ifn,fc_dims,ofn,nidxs,nidxs_lens,nidxs_bgs,cidxs,n
         feats=weights_inv*neighbor_ops.neighbor_sum_feat_gather(feats, cidxs, nidxs_lens, nidxs_bgs)  # [pn,ofn]
 
         with tf.variable_scope(name,reuse=reuse):
-            bias=_variable_on_cpu('{}_bias'.format(name),[ofn],tf.zeros_initializer())
+            bias=variable_on_cpu('{}_bias'.format(name), [ofn], tf.zeros_initializer())
 
         feats=tf.nn.bias_add(feats,bias)
 
@@ -649,7 +649,7 @@ def graph_conv_edge_xyz_v2(sxyzs,ifn,fc_dims,ofn,nidxs,nidxs_lens,nidxs_bgs,cidx
         feats=weights_inv*neighbor_ops.neighbor_sum_feat_gather(feats, cidxs, nidxs_lens, nidxs_bgs)  # [pn,ofn]
 
         with tf.variable_scope(name,reuse=reuse):
-            bias=_variable_on_cpu('{}_bias'.format(name),[ofn],tf.zeros_initializer())
+            bias=variable_on_cpu('{}_bias'.format(name), [ofn], tf.zeros_initializer())
 
         feats=tf.nn.bias_add(feats,bias)
 
@@ -778,7 +778,7 @@ def graph_conv_edge_xyz_simp_v2(sxyzs, ifn, ifc_dims, ofc_dims, ofn, nidxs, nidx
                                                 activation_fn=tf.nn.relu, reuse=reuse)
 
         # with tf.variable_scope(name,reuse=reuse):
-        #     bias=_variable_on_cpu('{}_bias'.format(name),[ofn],tf.zeros_initializer())
+        #     bias=variable_on_cpu('{}_bias'.format(name),[ofn],tf.zeros_initializer())
         # feats=tf.nn.bias_add(feats,bias)
         # if activation_fn is not None:
         #     feats=activation_fn(feats)

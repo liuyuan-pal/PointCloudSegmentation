@@ -565,9 +565,17 @@ def semantic3d_sample_test_set():
     fns,pns=get_semantic3d_testset()
     for fn,pn in zip(fns,pns):
         points, labels = read_room_pkl('data/Semantic3D.Net/pkl/test/' + fn + '.pkl')
-        idxs=libPointUtil.gridDownsampleGPU(points,0.1,False)
+        idxs=libPointUtil.gridDownsampleGPU(points,0.3,False)
         points=points[idxs]
         output_points('test_result/{}_color.txt'.format(fn), points)
 
 if __name__=="__main__":
-    semantic3d_sample_training_block()
+    # train_list=semantic3d_read_train_block_list()
+    # count=0
+    # for fs in train_list:
+    #     print fs
+    #     data=read_pkl('data/Semantic3D.Net/block/sampled/'+fs)
+    #     count+=len(data[0])
+    #
+    # print count
+    semantic3d_sample_test_set()

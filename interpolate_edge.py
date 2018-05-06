@@ -1,5 +1,5 @@
 import tensorflow as tf
-from model_pooling import graph_conv_pool_edge_simp_2layers,classifier_v3,points_pooling_two_layers
+from model_pgnet import *
 from train_graph_pool import neighbor_anchors_v2
 from io_util import read_pkl,get_block_train_test_split,read_room_pkl,get_class_names
 from aug_util import compute_nidxs_bgs
@@ -20,9 +20,8 @@ FLAGS = parser.parse_args()
 
 def build_network(xyzs, feats, labels, is_training, reuse=False):
     xyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
-        points_pooling_two_layers(xyzs, feats, labels, voxel_size1=0.15, voxel_size2=0.3, block_size=3.0)
-    global_feats,local_feats,_=graph_conv_pool_edge_simp_2layers(xyzs, dxyzs, feats, vlens, vbegs, vcens,
-                                                                 [0.15,0.3], 3.0, [0.15,0.3,0.5], reuse)
+        points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.15,voxel_size2=0.45,block_size=3.0)
+    global_feats, local_feats = pgnet_model_v8(xyzs,dxyzs,feats,vlens,vbegs,vcens,reuse)
 
     global_feats=tf.expand_dims(global_feats,axis=0)
     local_feats=tf.expand_dims(local_feats,axis=0)
@@ -61,9 +60,9 @@ def eval_room_probs(fn,sess,pls,ops,feed_dict):
 
     def read_fn(filename):
         data=read_pkl(filename)
-        return data[0],data[2],data[3],data[4],data[12]
+        return data
 
-    all_feed_in=read_fn('data/S3DIS/sampled_test/'+fn)
+    all_feed_in=read_fn('data/S3DIS/sampled_test_nolimits/'+fn)
     all_xyzs,all_lbls,all_probs=[],[],[]
 
     for i in xrange(len(all_feed_in[0])):
@@ -93,13 +92,15 @@ def interpolate(sxyzs,sprobs,qxyzs,ratio=1.0/(2*0.075*0.075)):
     return qprobs
 
 if __name__=="__main__":
+    import random
     train_list,test_list=get_block_train_test_split()
     sess, pls, ops, feed_dict=build_session()
     all_preds,all_labels=[],[]
     fp = np.zeros(13, dtype=np.uint64)
     tp = np.zeros(13, dtype=np.uint64)
     fn = np.zeros(13, dtype=np.uint64)
-    for fs in test_list:
+    random.shuffle(test_list)
+    for fi,fs in enumerate(test_list):
         sxyzs,slbls,sprobs=eval_room_probs(fs,sess,pls,ops,feed_dict)
         filename='data/S3DIS/room_block_10_10/'+fs
         points,labels=read_pkl(filename)
@@ -119,21 +120,31 @@ if __name__=="__main__":
         qprobs=np.concatenate(qprobs,axis=0)
         qpreds=np.argmax(qprobs,axis=1)
 
-        # print np.min(sxyzs,axis=0)
-        # print np.min(qxyzs,axis=0)
-
         colors=get_class_colors()
         spreds=np.argmax(sprobs,axis=1)
-        # print labels.shape
-        # print qpreds.shape
+
         fp, tp, fn=acc_val(labels.flatten(),qpreds.flatten(),fp,tp,fn)
-        # output_points('test_result/spreds.txt',sxyzs,colors[spreds,:])
-        # output_points('test_result/slabel.txt',sxyzs,colors[slbls.flatten(),:])
-        # output_points('test_result/qpreds.txt',qxyzs,colors[qpreds,:])
-        # output_points('test_result/qlabel.txt',qxyzs,colors[labels.flatten(),:])
-        # break
+
+        if fi<=5:
+            idxs=libPointUtil.gridDownsampleGPU(sxyzs,0.01,False)
+            sxyzs=sxyzs[idxs]
+            spreds=spreds[idxs]
+            slbls=slbls[idxs]
+            output_points('test_result/{}spreds.txt'.format(fi),sxyzs,colors[spreds,:])
+            output_points('test_result/{}slabel.txt'.format(fi),sxyzs,colors[slbls,:])
+
+            idxs=libPointUtil.gridDownsampleGPU(qxyzs,0.01,False)
+            qxyzs=qxyzs[idxs]
+            qpreds=qpreds[idxs]
+            labels=labels[idxs]
+            points=points[idxs]
+            output_points('test_result/{}qpreds.txt'.format(fi),qxyzs,colors[qpreds,:])
+            output_points('test_result/{}qlabel.txt'.format(fi),qxyzs,colors[labels.flatten(),:])
+            output_points('test_result/{}qcolor.txt'.format(fi),points)
+
         # iou, miou, oiou, acc, macc, oacc=val2iou(fp,tp,fn)
         # print 'mean iou {:.5} overall iou {:5} \nmean acc {:5} overall acc {:5}'.format(miou, oiou, macc, oacc)
+        # break
 
     iou, miou, oiou, acc, macc, oacc=val2iou(fp,tp,fn)
     print 'mean iou {:.5} overall iou {:5} \nmean acc {:5} overall acc {:5}'.format(miou, oiou, macc, oacc)

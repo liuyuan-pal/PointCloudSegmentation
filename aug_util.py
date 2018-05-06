@@ -27,7 +27,7 @@ def rotate(xyz,rotation_angle):
     rotation_matrix = np.array([[cosval, sinval, 0],
                                 [-sinval, cosval,  0],
                                 [      0,      0, 1]],dtype=np.float32)
-    xyz=np.dot(xyz,rotation_matrix)
+    xyz[:,:3]=np.dot(xyz[:,:3],rotation_matrix)
     return xyz
 
 

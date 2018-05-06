@@ -151,7 +151,7 @@ def eval_unpool(ifeats,vlens,vlens_bgs,cidxs,dupfeats,sess):
     return upfeats_val,difeats_val
 
 def test_unpool_single(pn2, dim, sess):
-    vlens=np.random.randint(5,10,[pn2])
+    vlens=np.random.randint(0,10,[pn2])
     vlens_bgs=compute_nidxs_bgs(vlens)
     cidxs=compute_cidxs(vlens)
 

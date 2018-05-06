@@ -4,13 +4,17 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model_pooling import points_pooling_two_layers,graph_conv_pool_edge_simp_2layers_s3d,classifier_v3
+from model_pooling import context_points_pooling_two_layers,graph_conv_pool_edge_simp_2layers_s3d,\
+    graph_conv_pool_context,classifier_v3,graph_conv_pool_context_with_pool,context_points_pooling
+from semantic3d_context_util import get_context_train_test
 from train_util import *
 from io_util import get_semantic3d_block_train_list,read_pkl,get_semantic3d_class_names,read_fn_hierarchy,\
     save_pkl,get_semantic3d_block_train_test_list
 from provider import Provider,default_unpack_feats_labels
 from draw_util import output_points,get_semantic3d_class_colors
 from functools import partial
+
+train_weights=np.asarray([0.0,3.5545287,3.211912,3.0997152,4.7834935,2.7914784,4.982284,5.260409,5.321266])
 
 def parser():
     parser = argparse.ArgumentParser()
@@ -28,9 +32,9 @@ def parser():
     parser.add_argument('--restore_model', type=str, default='', help='')
 
     parser.add_argument('--log_step', type=int, default=240, help='')
-    parser.add_argument('--train_dir', type=str, default='train/semantic_edge_2layer_v3', help='')
-    parser.add_argument('--save_dir', type=str, default='model/semantic_edge_2layer_v3', help='')
-    parser.add_argument('--log_file', type=str, default='semantic_edge_2layer_v3.log', help='')
+    parser.add_argument('--train_dir', type=str, default='train/semantic_context_avg', help='')
+    parser.add_argument('--save_dir', type=str, default='model/semantic_context_avg', help='')
+    parser.add_argument('--log_file', type=str, default='semantic_context_avg.log', help='')
 
     parser.add_argument('--eval',type=bool, default=False, help='')
     parser.add_argument('--eval_model',type=str, default='model/label/unsupervise80.ckpt',help='')
@@ -41,21 +45,26 @@ def parser():
     FLAGS = parser.parse_args()
 
     return FLAGS
-# training set labels count
-# [ 69821678.  38039379.  52260419.  54975958.  10229433.  67044610.
-#    7620115.   3612462.   2362445.]
 
 
-train_weights=np.asarray([0.0,3.5545287,3.211912,3.0997152,4.7834935,2.7914784,4.982284,5.260409,5.321266])
-
-def tower_loss(xyzs, feats, labels, is_training,reuse=False):
+def tower_loss(xyzs, feats, ctx_pts, ctx_idxs, labels, is_training,reuse=False):
 
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
-        xyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
-            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.25,voxel_size2=1.0,block_size=10.0)
+        xyzs, dxyzs, feats, labels, vlens, vbegs, vcens, ctx_idxs = \
+            context_points_pooling_two_layers(xyzs,feats,labels,ctx_idxs,voxel_size1=0.25,voxel_size2=1.0,block_size=10.0)
         global_feats,local_feats,ops=graph_conv_pool_edge_simp_2layers_s3d(xyzs, dxyzs, feats, vlens, vbegs, vcens,
                                                                            [0.25, 1.0], 10.0, [0.25,0.5,2.0], reuse)
+        ctx_xyzs,ctx_feats=tf.split(ctx_pts,[3,13],axis=1)
 
+        print ctx_xyzs,ctx_feats
+        # ctx_graph_feats=graph_conv_pool_context(ctx_xyzs,ctx_feats,block_size=50,radius=4.0,reuse=reuse)
+        ctx_xyzs,ctx_pxyzs,ctx_dxyzs,ctx_feats,ctx_vlens,ctx_vbegs,ctx_vcens,ctx_idxs=\
+            context_points_pooling(ctx_xyzs,ctx_feats,ctx_idxs,5,300)
+        ctx_graph_feats=graph_conv_pool_context_with_pool(ctx_xyzs,ctx_dxyzs,ctx_pxyzs,ctx_feats,ctx_vlens,ctx_vbegs,ctx_vcens,
+                                                          voxel_size=5.0,block_size=50.0,radius1=5.0,radius2=15.0,reuse=reuse)
+        ctx_graph_feats=tf.gather(ctx_graph_feats,ctx_idxs)
+
+        global_feats=tf.concat([global_feats,ctx_graph_feats],axis=1)
         global_feats_exp=tf.expand_dims(global_feats,axis=0)
         local_feats_exp=tf.expand_dims(local_feats,axis=0)
         logits=classifier_v3(global_feats_exp, local_feats_exp, is_training,
@@ -73,7 +82,7 @@ def tower_loss(xyzs, feats, labels, is_training,reuse=False):
     return loss,flatten_logits,labels_flatten
 
 
-def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
+def train_ops(xyzs, feats, ctx_pts, ctx_idxs, labels, is_training, epoch_batch_num):
     ops={}
     with tf.device('/cpu:0'):
         global_step = tf.get_variable(
@@ -95,7 +104,8 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
         for i in range(FLAGS.num_gpus):
             with tf.device('/gpu:{}'.format(i%4)):
                 with tf.name_scope('tower_{}'.format(i)):
-                    loss,logits,label=tower_loss(xyzs[i], feats[i], labels[i], is_training, reuse)
+                    loss,logits,label=tower_loss(xyzs[i], feats[i], ctx_pts[i], ctx_idxs[i],
+                                                 labels[i], is_training, reuse)
 
                     grad=opt.compute_gradients(loss)
                     tower_grads.append(grad)
@@ -133,9 +143,8 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
 
 
 def fill_feed_dict(feed_in,feed_dict,pls,num_gpus):
-    cur_data = default_unpack_feats_labels(feed_in, num_gpus)
-    if len(cur_data)==4: xyzs, rgbs, covars, lbls = cur_data
-    else: xyzs, rgbs, covars, lbls, _ = cur_data
+    xyzs, rgbs, covars, lbls, ctx_xyzs, ctx_idxs, block_mins = \
+        default_unpack_feats_labels(feed_in, num_gpus)
 
     batch_pt_num=0
     for k in xrange(num_gpus):
@@ -143,6 +152,9 @@ def fill_feed_dict(feed_in,feed_dict,pls,num_gpus):
         feats=np.concatenate([rgbs[k],covars[k]],axis=1)
         feed_dict[pls['feats'][k]]=feats
         feed_dict[pls['lbls'][k]]=lbls[k]
+        feed_dict[pls['lbls'][k]]=lbls[k]
+        feed_dict[pls['ctx_pts'][k]]=ctx_xyzs[k]
+        feed_dict[pls['ctx_idxs'][k]]=ctx_idxs[k]
 
         batch_pt_num += lbls[k].shape[0]
 
@@ -229,26 +241,25 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer
 
 def build_placeholder(num_gpus):
     pls = {}
-    pls['xyzs'], pls['feats'], pls['lbls'],pls['weights']=[],[],[],[]
+    pls['xyzs'], pls['feats'], pls['lbls'],pls['weights'],pls['ctx_pts'],pls['ctx_idxs']=[],[],[],[],[],[]
     for i in xrange(num_gpus):
         pls['xyzs'].append(tf.placeholder(tf.float32,[None,3],'xyzs{}'.format(i)))
         pls['feats'].append(tf.placeholder(tf.float32,[None,13],'feats{}'.format(i)))
         pls['lbls'].append(tf.placeholder(tf.int32,[None],'lbls{}'.format(i)))
         pls['weights'].append(tf.placeholder(tf.float32,[None],'weights{}'.format(i)))
+        pls['ctx_pts'].append(tf.placeholder(tf.float32,[None,16],'ctx_pts{}'.format(i)))
+        pls['ctx_idxs'].append(tf.placeholder(tf.int32,[None],'ctx_idxs{}'.format(i)))
 
     pls['is_training'] = tf.placeholder(tf.bool, name='is_training')
     return pls
 
 
 def train():
-    from semantic3d_context_util import get_context_train_test
     test_set=['sg27_station4_intensity_rgb','bildstein_station1_xyz_intensity_rgb']
     train_list,test_list=get_context_train_test(test_set)
     train_list=['data/Semantic3D.Net/context/block_avg/'+fn for fn in train_list]
     test_list=['data/Semantic3D.Net/context/block_avg/'+fn for fn in test_list]
-    def read_fn(model,fn):
-        xyzs, rgbs, covars, lbls, ctx_xyzs, ctx_idxs, block_mins=read_pkl(fn)
-        return xyzs, rgbs, covars, lbls, block_mins
+    read_fn=lambda model,filename: read_pkl(filename)
     train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
     test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
 
@@ -256,7 +267,8 @@ def train():
         pls=build_placeholder(FLAGS.num_gpus)
 
         batch_num_per_epoch=5000/FLAGS.num_gpus
-        ops=train_ops(pls['xyzs'],pls['feats'],pls['lbls'],pls['is_training'],batch_num_per_epoch)
+        ops=train_ops(pls['xyzs'],pls['feats'],pls['ctx_pts'],pls['ctx_idxs'],
+                      pls['lbls'],pls['is_training'],batch_num_per_epoch)
 
         feed_dict={}
         config = tf.ConfigProto()
@@ -267,7 +279,10 @@ def train():
         saver = tf.train.Saver(max_to_keep=500)
         sess.run(tf.global_variables_initializer())
         if FLAGS.restore:
-              saver.restore(sess,FLAGS.restore_model)
+            all_vars=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+            all_vars=[var for var in all_vars if not var.name.startswith('tower')]
+            restore_saver=tf.train.Saver(var_list=all_vars)
+            restore_saver.restore(sess,FLAGS.restore_model)
         else:
             sess.run(tf.global_variables_initializer())
 
@@ -283,21 +298,20 @@ def train():
 
 
 def eval():
-    from semantic3d_context_util import get_context_train_test
     test_set=['sg27_station4_intensity_rgb','bildstein_station1_xyz_intensity_rgb']
     train_list,test_list=get_context_train_test(test_set)
+    train_list=['data/Semantic3D.Net/context/block/'+fn for fn in train_list]
     test_list=['data/Semantic3D.Net/context/block/'+fn for fn in test_list]
-    def read_fn(model,fn):
-        xyzs, rgbs, covars, lbls, ctx_xyzs, ctx_idxs, block_mins=read_pkl(fn)
-        return xyzs, rgbs, covars, lbls, block_mins
+    read_fn=lambda model,filename: read_pkl(filename)
 
     test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
 
     try:
         pls=build_placeholder(FLAGS.num_gpus)
 
-        batch_num_per_epoch=2000/FLAGS.num_gpus
-        ops=train_ops(pls['xyzs'],pls['feats'],pls['lbls'],pls['is_training'],batch_num_per_epoch)
+        batch_num_per_epoch=5000/FLAGS.num_gpus
+        ops=train_ops(pls['xyzs'],pls['feats'],pls['ctx_pts'],pls['ctx_idxs'],
+                      pls['lbls'],pls['is_training'],batch_num_per_epoch)
 
         feed_dict={}
         config = tf.ConfigProto()
@@ -305,7 +319,6 @@ def eval():
         config.allow_soft_placement = True
         config.log_device_placement = False
         sess = tf.Session(config=config)
-
         saver = tf.train.Saver(max_to_keep=500)
         saver.restore(sess,FLAGS.eval_model)
         summary_writer = tf.summary.FileWriter(FLAGS.train_dir,graph=sess.graph)

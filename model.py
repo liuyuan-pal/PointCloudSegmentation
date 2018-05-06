@@ -901,12 +901,12 @@ def classifier_v2(feats, is_training, num_classes, reuse=False, use_bn=False):
 
             normalizer_params['scope']='class_mlp1_bn'
             class_mlp1 = tf.contrib.layers.conv2d(
-                feats, num_outputs=512, scope='class_mlp1',normalizer_params=normalizer_params)
+                feats, num_outputs=256, scope='class_mlp1',normalizer_params=normalizer_params)
             class_mlp1=tf.cond(is_training,lambda:tf.nn.dropout(class_mlp1,0.7),lambda:class_mlp1)
 
             normalizer_params['scope']='class_mlp2_bn'
             class_mlp2 = tf.contrib.layers.conv2d(
-                class_mlp1, num_outputs=256, scope='class_mlp2',normalizer_params=normalizer_params)
+                class_mlp1, num_outputs=128, scope='class_mlp2',normalizer_params=normalizer_params)
             class_mlp2=tf.cond(is_training,lambda:tf.nn.dropout(class_mlp2,0.7),lambda:class_mlp2)
 
             logits = tf.contrib.layers.conv2d(

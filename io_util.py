@@ -267,7 +267,7 @@ def get_semantic3d_block_train_test_list(
     train_list,test_list=[],[]
     fss=semantic3d_read_train_block_list()
     for fs in fss:
-        stem='_'.join(fs.split('_')[-2])
+        stem='_'.join(fs.split('_')[:-2])
         if stem in test_stems:
             if fs.endswith('0.pkl'):
                 test_list.append(fs)
