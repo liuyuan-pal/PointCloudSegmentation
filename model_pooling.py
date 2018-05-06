@@ -636,9 +636,10 @@ def test_block():
     [pts1, pts2, pts3], [dpts1, dpts2], feats, _, [vlens1, vlens2], [vbegs1, vbegs2], [vcens1, vcens2], vidx1, vidx2 = \
         points_pooling_two_layers_tmp(xyzs_pl, feats_pl, labels_pl, 0.15, 0.45, 3.0)
 
-    nidxs1, nlens1, nbegs1, ncens1 = search_neighborhood(pts2, 0.6)
-    nidxs2, nlens2, nbegs2, ncens2 = search_neighborhood(pts2, 0.3)
-    nidxs3, nlens3, nbegs3, ncens3 = search_neighborhood_range(pts2, 0.3, 0.45)
+    nidxs1, nlens1, nbegs1, ncens1 = search_neighborhood(pts1, 0.15)
+    nidxs2, nlens2, nbegs2, ncens2 = search_neighborhood_range(pts1, 0.1, 0.15)
+    nidxs3, nlens3, nbegs3, ncens3 = search_neighborhood(pts2, 0.6)
+    nidxs4, nlens4, nbegs4, ncens4 = search_neighborhood_range(pts2, 0.3, 0.45)
 
 
     config = tf.ConfigProto()

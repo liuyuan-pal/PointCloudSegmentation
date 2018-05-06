@@ -151,12 +151,15 @@ def eval_tf_diff_val(feats,dsfeats,nidxs,nlens,nbegs,sess):
 def test_copy_single(pn,fd,sess):
     feats=np.random.uniform(-1,1,[pn,fd])
     nidxs=[]
+    nlens=[]
     for i in xrange(pn):
-        idxs=list(np.random.choice(pn,5,False))
-        if i not in idxs: idxs.append(i)
-        nidxs.append(idxs)
+        num=np.random.randint(0,10)
+        nlens.append(num)
+        if num>0:
+            idxs=np.random.choice(pn,num,False)
+            nidxs.append(idxs)
 
-    nlens=np.asarray([len(idxs) for idxs in nidxs])
+    nlens=np.asarray(nlens)
     nbegs=compute_nidxs_bgs(nlens)
     ncens=compute_cidxs(nlens)
     nidxs=np.concatenate(nidxs,axis=0)
@@ -182,12 +185,15 @@ def test_diff_single(pn,fd,sess):
     feats=np.random.uniform(-1,1,[pn,fd])
     ifeats=np.copy(feats)
     nidxs=[]
+    nlens=[]
     for i in xrange(pn):
-        idxs=list(np.random.choice(pn,5,False))
-        if i not in idxs: idxs.append(i)
-        nidxs.append(idxs)
+        num=np.random.randint(0,10)
+        nlens.append(num)
+        if num>0:
+            idxs=np.random.choice(pn,num,False)
+            nidxs.append(idxs)
 
-    nlens=np.asarray([len(idxs) for idxs in nidxs])
+    nlens=np.asarray(nlens)
     nbegs=compute_nidxs_bgs(nlens)
     ncens=compute_cidxs(nlens)
     nidxs=np.concatenate(nidxs,axis=0)
@@ -256,5 +262,5 @@ def test_diff():
         test_diff_single(pn,fd,sess)
 
 if __name__=="__main__":
-    test_diff_np(50,100)
-    test_diff()
+    # test_diff_np(50,100)
+    test_copy()

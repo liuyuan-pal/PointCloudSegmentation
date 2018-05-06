@@ -201,6 +201,7 @@ void neighborMaxFeatGatherGPU(
     dim3 block_dim(bdim0,bdim1,bdim2);
     dim3 thread_dim(tdim0,tdim1,tdim2);
 
+    gpuErrchk(cudaMemset(d_ogfeats_sum,0,pn2*fd*sizeof(FLT_TYPE)))
     maxFeatGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>
       (d_ifeats,d_vlens,d_vlens_bgs,pn2,fd,d_ogfeats_sum,d_ogmax_idxs);
     gpuErrchk(cudaGetLastError())
