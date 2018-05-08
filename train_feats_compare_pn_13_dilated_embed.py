@@ -6,6 +6,7 @@ import os
 import tensorflow as tf
 from model_pointnet import *
 from model_pooling import *
+from model import classifier_v2
 from train_util import *
 from io_util import get_class_names,get_block_train_test_split,read_pkl
 from provider import Provider,default_unpack_feats_labels
@@ -22,23 +23,14 @@ parser.add_argument('--decay_rate', type=float, default=0.5, help='')
 parser.add_argument('--decay_epoch', type=int, default=50, help='')
 parser.add_argument('--num_classes', type=int, default=13, help='')
 
-parser.add_argument('--restore',type=bool, default=False, help='')
 parser.add_argument('--restore_epoch', type=int, default=0, help='')
-parser.add_argument('--restore_model', type=str, default='', help='')
+parser.add_argument('--restore_model', type=str, default='model/pointnet_10_concat_pre/model53.ckpt', help='')
 
 parser.add_argument('--log_step', type=int, default=120, help='')
-parser.add_argument('--train_dir', type=str, default='train/pointnet_13_dilated_embed', help='')
-parser.add_argument('--save_dir', type=str, default='model/pointnet_13_dilated_embed', help='')
-parser.add_argument('--log_file', type=str, default='pointnet_13_dilated_embed.log', help='')
-parser.add_argument('--use_root', type=bool, default=False, help='')
-parser.add_argument('--use_diffusion', type=bool, default=False, help='')
-parser.add_argument('--test_subset', type=bool, default=False, help='')
+parser.add_argument('--pop_id', type=int, default=0, help='')
+parser.add_argument('--compare_type', type=str, default='ablation', help='')
 
-
-parser.add_argument('--eval',type=bool, default=False, help='')
-parser.add_argument('--eval_model',type=str, default='model/label/unsupervise80.ckpt',help='')
-
-parser.add_argument('--train_epoch_num', type=int, default=100, help='')
+parser.add_argument('--train_epoch_num', type=int, default=30, help='')
 
 FLAGS = parser.parse_args()
 
@@ -48,20 +40,48 @@ train_weights=[2.80089331,2.92693353,2.94871211,5.12748384,5.07317114,
                5.26789713,3.67803526]
 train_weights=np.asarray(train_weights)
 
+feats_name=['feats_stage2_pool','feats_stage2','feats_stage2_fc','feats_stage1','feats_stage1_fc','feats_stage0','feats_stage0_fc']
+feats_dims=[256,128+64+96,256,64+32+32+48+64,128,3+16+16+32+32,64]
+feats_sort_name=['feats_stage2_pool','feats_stage2_fc','feats_stage2','feats_stage1_fc','feats_stage1','feats_stage0_fc','feats_stage0']
+feats_detail_dims=[256,128,64,96,256,64,32,32,48,64,128,3,16,16,32,32,64]
+
+if FLAGS.compare_type=='pop':
+    feats_log = 'pointnet_10_concat_pre_compare/{}.log'.format(feats_name[FLAGS.pop_id])
+elif FLAGS.compare_type=='stage':
+    feats_log = 'pointnet_10_concat_pre_compare/all_stage.log'.format(feats_name[FLAGS.pop_id])
+elif FLAGS.compare_type=='fc':
+    feats_log='pointnet_10_concat_pre_compare/all_fc.log'
+elif FLAGS.compare_type=='sort_ablation':
+    feats_log='pointnet_10_concat_pre_compare/sort_{}.log'.format(feats_sort_name[FLAGS.pop_id])
+else:
+    feats_log='pointnet_10_concat_pre_compare/pop_{}.log'.format(feats_name[FLAGS.pop_id])
+
+
 def tower_loss(xyzs, feats, labels, is_training, reuse=False):
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         xyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
             points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.15,voxel_size2=0.45,block_size=3.0)
-        # global_feats,local_feats,_=pgnet_model_v3_bn(xyzs, dxyzs, feats, vlens, vbegs,
-        #                                              vcens, [0.15,0.45], 3.0, is_training, [0.15, 0.3, 0.9], reuse)
         global_feats, local_feats = pointnet_13_dilated_embed(xyzs,dxyzs,feats,vlens,vbegs,vcens,reuse)
-        # global_feats, local_feats = pgnet_model_v8(xyzs,dxyzs,feats,vlens,vbegs,vcens,reuse)
-        # labels=tf.cast(labels,tf.int64)
-        # global_feats,local_feats=naiive_pointnet(xyzs,feats)
 
+        feats=tf.split(global_feats,feats_dims,axis=1)
+        feats_sort=[feats[0],feats[2],feats[1],feats[4],feats[3],feats[6],feats[5]]
+        print global_feats.shape
+        if FLAGS.compare_type=='pop':
+            feats.pop(FLAGS.pop_id)
+            global_feats=tf.concat(feats[FLAGS.pop_id],axis=1)
+        elif FLAGS.compare_type=='stage':
+            global_feats = tf.concat([feats[1], feats[3], feats[5]], axis=1)
+        elif FLAGS.compare_type=='fc':
+            global_feats=tf.concat([feats[0],feats[2],feats[4],feats[6]],axis=1)
+        elif FLAGS.compare_type=='sort_ablation':
+            global_feats=tf.concat(feats_sort[FLAGS.pop_id:],axis=1)
+        else:
+            global_feats=tf.concat(feats[FLAGS.pop_id:],axis=1)
+
+
+        print global_feats.shape
         global_feats=tf.expand_dims(global_feats,axis=0)
-        local_feats=tf.expand_dims(local_feats,axis=0)
-        logits=classifier_v3(global_feats, local_feats, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
+        logits=classifier_v2(global_feats, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
 
         flatten_logits = tf.reshape(logits, [-1, FLAGS.num_classes])  # [pn,num_classes]
 
@@ -71,7 +91,6 @@ def tower_loss(xyzs, feats, labels, is_training, reuse=False):
         train_weights_tf=tf.Variable(train_weights,trainable=False,name='train_weights')
         weights=tf.gather(train_weights_tf,labels_flatten)
         loss=tf.losses.sparse_softmax_cross_entropy(labels_flatten,flatten_logits,weights=weights)
-        # loss=tf.losses.sparse_softmax_cross_entropy(labels_flatten,flatten_logits)
 
     tf.summary.scalar(loss.op.name,loss)
 
@@ -102,7 +121,8 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
                 with tf.name_scope('tower_{}'.format(i)):
                     loss,logits,label=tower_loss(xyzs[i], feats[i], labels[i], is_training, reuse)
 
-                    grad=opt.compute_gradients(loss)
+                    var_list = [var for var in tf.trainable_variables() if var.name.startswith('class_mlp')]
+                    grad=opt.compute_gradients(loss,var_list=var_list)
                     tower_grads.append(grad)
                     tower_losses.append(loss)
                     tower_logits.append(logits)
@@ -137,7 +157,7 @@ def train_ops(xyzs, feats, labels, is_training, epoch_batch_num):
     return ops
 
 
-def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
+def train_one_epoch(ops,pls,sess,trainset,epoch_num,feed_dict):
     epoch_begin=time.time()
     total_correct,total_block,total_points=0,0,0
     begin_time=time.time()
@@ -162,21 +182,20 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
                 epoch_num,i,np.mean(np.asarray(total_losses)),
                 float(total_correct)/total_points,
                 float(total_block)/(time.time()-begin_time),lr
-            ),FLAGS.log_file)
+            ),feats_log)
 
-            summary_writer.add_summary(summary,global_step)
             total_correct,total_block,total_points=0,0,0
             begin_time=time.time()
             total_losses=[]
 
         # test every 11600(half the training set)
-        if i*FLAGS.num_gpus>7500:
+        if i*FLAGS.num_gpus>2500:
             break
 
-    log_str('epoch {} cost {} s'.format(epoch_num, time.time()-epoch_begin), FLAGS.log_file)
+    log_str('epoch {} cost {} s'.format(epoch_num, time.time()-epoch_begin), feats_log)
 
 
-def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer=None):
+def test_one_epoch(ops,pls,sess,testset,epoch_num,feed_dict):
     begin_time=time.time()
     test_loss=[]
     all_preds,all_labels=[],[]
@@ -198,15 +217,11 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer
 
     log_str('mean iou {:.5} overall iou {:5} loss {:5} \n mean acc {:5} overall acc {:5} cost {:3} s'.format(
         miou, oiou, test_loss, macc, oacc, time.time()-begin_time
-    ),FLAGS.log_file)
+    ),feats_log)
 
-    if not FLAGS.eval:
-        checkpoint_path = os.path.join(FLAGS.save_dir, 'model{}.ckpt'.format(epoch_num))
-        saver.save(sess,checkpoint_path)
-    else:
-        names=get_class_names()
-        for i in xrange(len(names)):
-            print '{} iou {} acc {}'.format(names[i],iou[i],acc[i])
+    names=get_class_names()
+    for i in xrange(len(names)):
+        log_str('{} iou {} acc {}'.format(names[i],iou[i],acc[i]),feats_log,False)
 
 
 def fill_feed_dict(feed_in,feed_dict,pls,num_gpus):
@@ -215,8 +230,6 @@ def fill_feed_dict(feed_in,feed_dict,pls,num_gpus):
     batch_labels=[]
     for k in xrange(num_gpus):
         feed_dict[pls['xyzs'][k]]=cxyzs[k]
-        # feats=np.concatenate([rgbs[k],covars[k]],axis=1)
-        # feed_dict[pls['feats'][k]]=feats
         feed_dict[pls['feats'][k]]=rgbs[k]
         feed_dict[pls['lbls'][k]]=lbls[k]
 
@@ -232,7 +245,6 @@ def build_placeholder(num_gpus):
     for i in xrange(num_gpus):
         pls['xyzs'].append(tf.placeholder(tf.float32,[None,3],'xyzs{}'.format(i)))
         pls['feats'].append(tf.placeholder(tf.float32,[None,3],'feats{}'.format(i)))
-        # pls['feats'].append(tf.placeholder(tf.float32,[None,12],'feats{}'.format(i)))
         pls['lbls'].append(tf.placeholder(tf.int32,[None],'lbls{}'.format(i)))
 
     pls['is_training'] = tf.placeholder(tf.bool, name='is_training')
@@ -241,43 +253,10 @@ def build_placeholder(num_gpus):
 
 def train():
     import random
-    from aug_util import flip,swap_xy
     train_list,test_list=get_block_train_test_split()
     train_list=['data/S3DIS/sampled_train_nolimits/'+fn for fn in train_list]
-    # train_list=['data/S3DIS/sampled_train_no_aug/'+fn for fn in train_list]
-    # with open('cached/s3dis_merged_train.txt', 'r') as f:
-    #     train_list=[line.strip('\n') for line in f.readlines()]
     random.shuffle(train_list)
     test_list=['data/S3DIS/sampled_test_nolimits/'+fn for fn in test_list]
-
-
-    def train_fn(model,filename):
-        xyzs, rgbs, covars, lbls, block_mins=read_pkl(filename)
-
-        num=len(xyzs)
-        for i in xrange(num):
-            # pt_num=len(xyzs[i])
-            # ds_ratio=np.random.uniform(0.8,1.0)
-            # idxs=np.random.choice(pt_num,int(ds_ratio*pt_num),False)
-            #
-            # xyzs[i]=xyzs[i][idxs]
-            # rgbs[i]=rgbs[i][idxs]
-            # covars[i]=covars[i][idxs]
-            # lbls[i]=lbls[i][idxs]
-
-            if random.random()<0.5:
-                xyzs[i]=flip(xyzs[i],axis=0)
-
-            if random.random()<0.5:
-                xyzs[i]=flip(xyzs[i],axis=1)
-
-            if random.random()<0.5:
-                xyzs[i]=swap_xy(xyzs[i])
-
-            jitter_color=np.random.uniform(-0.02,0.02,rgbs[i].shape)
-            rgbs[i]+=jitter_color
-
-        return xyzs, rgbs, covars, lbls, block_mins
 
     def test_fn(model,filename):
         xyzs, rgbs, covars, lbls, block_mins=read_pkl(filename)
@@ -297,59 +276,20 @@ def train():
         config.allow_soft_placement = True
         config.log_device_placement = False
         sess = tf.Session(config=config)
-        saver = tf.train.Saver(max_to_keep=500)
-        if FLAGS.restore:
-              saver.restore(sess,FLAGS.restore_model)
-        else:
-            sess.run(tf.global_variables_initializer())
-
-        summary_writer = tf.summary.FileWriter(FLAGS.train_dir,graph=sess.graph)
+        sess.run(tf.global_variables_initializer())
+        var_list=[var for var in tf.trainable_variables() if not var.name.startswith('class_mlp')]
+        saver = tf.train.Saver(max_to_keep=500,var_list=var_list)
+        saver.restore(sess,FLAGS.restore_model)
 
         for epoch_num in xrange(FLAGS.restore_epoch,FLAGS.train_epoch_num):
-            train_one_epoch(ops,pls,sess,summary_writer,train_provider,epoch_num,feed_dict)
-            test_one_epoch(ops,pls,sess,saver,test_provider,epoch_num,feed_dict)
+            train_one_epoch(ops,pls,sess,train_provider,epoch_num,feed_dict)
+            test_one_epoch(ops,pls,sess,test_provider,epoch_num,feed_dict)
 
     finally:
         train_provider.close()
         test_provider.close()
 
 
-def eval():
-    train_list,test_list=get_block_train_test_split()
-    test_list=['data/S3DIS/sampled_test/'+fn for fn in test_list]
-
-    def fn(model,filename):
-        data=read_pkl(filename)
-        xyzs=[t[0] for t in data[0]]
-        return xyzs,data[2],data[3],data[4],data[12]
-
-    # def fn(model,filename):
-    #     data=read_pkl(filename)
-    #     return data
-
-    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,fn)
-
-    try:
-        pls=build_placeholder(FLAGS.num_gpus)
-        batch_num_per_epoch=2000/FLAGS.num_gpus
-        ops=train_ops(pls['xyzs'],pls['feats'],pls['lbls'],pls['is_training'],batch_num_per_epoch)
-
-        feed_dict={}
-        config = tf.ConfigProto()
-        config.gpu_options.allow_growth = True
-        config.allow_soft_placement = True
-        config.log_device_placement = False
-        sess = tf.Session(config=config)
-
-        saver = tf.train.Saver(max_to_keep=500)
-        saver.restore(sess,FLAGS.eval_model)
-        summary_writer = tf.summary.FileWriter(FLAGS.train_dir,graph=sess.graph)
-        test_one_epoch(ops,pls,sess,saver,test_provider,0,feed_dict,summary_writer)
-
-    finally:
-        test_provider.close()
-
 
 if __name__=="__main__":
-    if FLAGS.eval: eval()
-    else: train()
+    train()
