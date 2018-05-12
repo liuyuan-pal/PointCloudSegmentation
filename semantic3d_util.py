@@ -221,23 +221,23 @@ def normalize_semantic3d_block(xyzs,rgbs,covars,lbls,offset_z,bsize=3.0,
 
     # t=0
     for bid in xrange(bn):
-        if resample:
-            pt_num=len(xyzs[bid])
-            random_down_ratio=np.random.uniform(resample_low,resample_high)
-            idxs=np.random.choice(pt_num,int(pt_num*random_down_ratio))
-            xyzs[bid]=xyzs[bid][idxs,:]
-            rgbs[bid]=rgbs[bid][idxs,:]
-            lbls[bid]=lbls[bid][idxs]
-            covars[bid]=covars[bid][idxs,:]
+        # if resample:
+        #     pt_num=len(xyzs[bid])
+        #     random_down_ratio=np.random.uniform(resample_low,resample_high)
+        #     idxs=np.random.choice(pt_num,int(pt_num*random_down_ratio))
+        #     xyzs[bid]=xyzs[bid][idxs,:]
+        #     rgbs[bid]=rgbs[bid][idxs,:]
+        #     lbls[bid]=lbls[bid][idxs]
+        #     covars[bid]=covars[bid][idxs,:]
 
-        if len(xyzs[bid])>max_pt_num:
-            pt_num=len(xyzs[bid])
-            ratio=max_pt_num/float(len(xyzs[bid]))
-            idxs=np.random.choice(pt_num,int(pt_num*ratio))
-            xyzs[bid]=xyzs[bid][idxs,:]
-            rgbs[bid]=rgbs[bid][idxs,:]
-            lbls[bid]=lbls[bid][idxs]
-            covars[bid]=covars[bid][idxs,:]
+        # if len(xyzs[bid])>max_pt_num:
+        #     pt_num=len(xyzs[bid])
+        #     ratio=max_pt_num/float(len(xyzs[bid]))
+        #     idxs=np.random.choice(pt_num,int(pt_num*ratio))
+        #     xyzs[bid]=xyzs[bid][idxs,:]
+        #     rgbs[bid]=rgbs[bid][idxs,:]
+        #     lbls[bid]=lbls[bid][idxs]
+        #     covars[bid]=covars[bid][idxs,:]
 
         # offset center to zero
         # !!! dont rescale here since it will affect the neighborhood size !!!
@@ -266,13 +266,13 @@ def normalize_semantic3d_block(xyzs,rgbs,covars,lbls,offset_z,bsize=3.0,
 def semantic3d_process_block(filename,offset_z):
     points,labels=read_room_pkl(filename) # [n,6],[n,1]
     xyzs, rgbs, covars, lbls=sample_block(points,labels,sample_stride,block_size,block_stride,min_pn=min_point_num,
-                                          use_rescale=True,use_flip=True,use_rotate=False,
+                                          use_rescale=False,use_flip=False,use_rotate=False,
                                           covar_ds_stride=covar_sample_stride,covar_nn_size=covar_neighbor_radius,
                                           gpu_gather=True)
     # normalize rgbs
     xyzs, rgbs, covars, lbls, block_mins=normalize_semantic3d_block(xyzs,rgbs,covars,lbls,offset_z,block_size,
-                                                                    resample=True,resample_low=0.8,resample_high=1.0,
-                                                                    jitter_color=True,jitter_val=2.5,max_pt_num=max_pt_num)
+                                                                    resample=False,resample_low=0.8,resample_high=1.0,
+                                                                    jitter_color=False,jitter_val=2.5,max_pt_num=max_pt_num)
     return xyzs, rgbs, covars, lbls, block_mins
 
 
@@ -281,14 +281,9 @@ def semantic3d_sample_single_file_training_block(tfs):
     stem='_'.join(tfs.split('_')[:-2])
     offset_z=stem_offset_map[stem]
     fs='data/Semantic3D.Net/block/train/'+tfs
-    all_data=[[] for _ in xrange(5)]
-    for i in xrange(3):
-        data=semantic3d_process_block(fs,offset_z)
+    data=semantic3d_process_block(fs,offset_z)
 
-        for k in xrange(5):
-            all_data[k]+=data[k]
-
-    save_pkl('data/Semantic3D.Net/block/sampled/'+tfs,all_data)
+    save_pkl('data/Semantic3D.Net/block/sampled/'+tfs,data)
     print '{} done'.format(tfs)
 
 # step 3 process block to block/sampled
@@ -297,7 +292,6 @@ def semantic3d_sample_training_block():
     train_list=semantic3d_read_train_block_list()
     futures=[executor.submit(semantic3d_sample_single_file_training_block,tfs) for tfs in train_list]
     for f in futures: f.result()
-
 
 def test_process_block():
     fss=semantic3d_read_train_block_list()
@@ -563,19 +557,101 @@ def semantic3d_test_to_block_with_rotate():
 
 def semantic3d_sample_test_set():
     fns,pns=get_semantic3d_testset()
-    for fn,pn in zip(fns,pns):
+    for fn,pn in zip(fns[2:3],pns[2:3]):
         points, labels = read_room_pkl('data/Semantic3D.Net/pkl/test/' + fn + '.pkl')
-        idxs=libPointUtil.gridDownsampleGPU(points,0.3,False)
+        idxs=libPointUtil.gridDownsampleGPU(points,0.1,False)
         points=points[idxs]
         output_points('test_result/{}_color.txt'.format(fn), points)
 
+def get_block_points_num_hist():
+    import matplotlib as mpl
+    mpl.use('Agg')
+    import matplotlib.pyplot as plt
+    train_list=semantic3d_read_train_block_list()
+
+    random.shuffle(train_list)
+    pt_nums=[]
+    for tfs in train_list[:10]:
+        stem_offset_map=semantic3d_read_map_offset_z()
+        stem='_'.join(tfs.split('_')[:-2])
+        offset_z=stem_offset_map[stem]
+        fs='data/Semantic3D.Net/block/train/'+tfs
+        data=semantic3d_process_block(fs,offset_z)
+        pt_nums+=[len(d) for d in data[0]]
+
+    plt.figure(0)
+    plt.hist(pt_nums)
+    plt.savefig('test_result/semantic3d_pt_nums.png')
+    plt.close()
+
+def get_dataset_info():
+    test_set=['sg27_station4_intensity_rgb','bildstein_station1_xyz_intensity_rgb']
+    train_list,test_list=get_semantic3d_block_train_test_list(test_set)
+    train_list=['data/Semantic3D.Net/block/sampled/'+fn for fn in train_list]
+    test_list=['data/Semantic3D.Net/block/sampled/'+fn for fn in test_list]
+
+    counts=np.zeros(9)
+    block_num=0
+    for tfs in train_list:
+        data=read_pkl(tfs)
+        block_num+=len(data[0])
+        if len(data[-2])==1:
+            labels=data[-2][0]
+        elif len(data[0])==0:
+            continue
+        else:
+            labels=np.concatenate(data[-2],axis=0)
+        count,_=np.histogram(labels,np.arange(10))
+        counts+=count
+
+    print 'train {}'.format(block_num)
+    print counts
+
+    block_num=0
+    counts=np.zeros(9)
+    for tfs in test_list:
+        data=read_pkl(tfs)
+        block_num+=len(data[0])
+        if len(data[-2])==1:
+            labels=data[-2][0]
+        elif len(data[0])==0:
+            continue
+        else:
+            labels=np.concatenate(data[-2],axis=0)
+        count,_=np.histogram(labels,np.arange(10))
+        counts+=count
+
+    print 'test {}'.format(block_num)
+    print counts
+
 if __name__=="__main__":
+    # import matplotlib as mpl
+    # mpl.use('Agg')
+    # import matplotlib.pyplot as plt
+    # from draw_util import output_points,get_semantic3d_class_colors
     # train_list=semantic3d_read_train_block_list()
-    # count=0
-    # for fs in train_list:
-    #     print fs
-    #     data=read_pkl('data/Semantic3D.Net/block/sampled/'+fs)
-    #     count+=len(data[0])
+    # class_colors=get_semantic3d_class_colors()
     #
-    # print count
+    # pt_nums=[]
+    # for ti,tfs in enumerate(train_list[1:2]):
+    #     points,labels=read_pkl('data/Semantic3D.Net/block/train/'+tfs)
+    #     xyzs, rgbs, covars, lbls=sample_block(points,labels,0.05,block_size,block_stride,min_pn=min_point_num,
+    #                                           use_rescale=False,use_flip=False,use_rotate=False,
+    #                                           covar_ds_stride=0.05,covar_nn_size=0.2,
+    #                                           gpu_gather=True)
+    #     print len(xyzs)
+    #     xyzs=np.concatenate(xyzs[:5],axis=0)
+    #     rgbs=np.concatenate(rgbs[:5],axis=0)
+    #     lbls=np.concatenate(lbls[:5],axis=0)
+    #     covars=np.concatenate(covars[:5],axis=0)
+    #
+    #     num_classes=5
+    #     colors=np.random.randint(0,255,[num_classes,3])
+    #     from sklearn.cluster import KMeans
+    #     kmeans=KMeans(num_classes,n_jobs=-1)
+    #     preds=kmeans.fit_predict(covars)
+    #
+    #     output_points('test_result/xyz{}.txt'.format(ti),xyzs,rgbs)
+    #     output_points('test_result/cls{}.txt'.format(ti),xyzs,class_colors[lbls])
+    #     output_points('test_result/cov{}.txt'.format(ti),xyzs,colors[preds])
     semantic3d_sample_test_set()

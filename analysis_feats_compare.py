@@ -118,7 +118,8 @@ def model_figure():
     fns=['pointnet_10_concat_pre_deconv.log','pointnet_10_concat_pre_embed.log',
          'pointnet_10_dilated_deconv.log','pointnet_10_dilated.log','pointnet_14_dilated.log','pointnet_20_baseline.log',
          'pointnet_20_baseline_v2.log',
-         'pointnet_5_concat.log','pointnet_5_concat_pre_deconv.log','pointnet_5_concat_pre.log']
+         'pointnet_5_concat.log','pointnet_5_concat_pre_deconv.log','pointnet_5_concat_pre.log','pointnet_13_dilated_embed.log',
+         'pgnet_v8.log']
 
     base_mious = read_mious('pointnet_10_concat_pre.log')
     for fi,fn in enumerate(fns):

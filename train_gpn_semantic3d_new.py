@@ -4,7 +4,8 @@ import numpy as np
 import os
 
 import tensorflow as tf
-from model_pooling import points_pooling_two_layers,graph_conv_pool_edge_simp_2layers_s3d,classifier_v3
+from model_pointnet_semantic3d import *
+from model_pooling import *
 from train_util import *
 from io_util import get_semantic3d_block_train_list,read_pkl,get_semantic3d_class_names,read_fn_hierarchy,\
     save_pkl,get_semantic3d_block_train_test_list
@@ -28,9 +29,9 @@ def parser():
     parser.add_argument('--restore_model', type=str, default='', help='')
 
     parser.add_argument('--log_step', type=int, default=240, help='')
-    parser.add_argument('--train_dir', type=str, default='train/semantic_edge_2layer_v3', help='')
-    parser.add_argument('--save_dir', type=str, default='model/semantic_edge_2layer_v3', help='')
-    parser.add_argument('--log_file', type=str, default='semantic_edge_2layer_v3.log', help='')
+    parser.add_argument('--train_dir', type=str, default='train/pointnet_10_concat_pre_embed_semantic3d_noaug', help='')
+    parser.add_argument('--save_dir', type=str, default='model/pointnet_10_concat_pre_embed_semantic3d_noaug', help='')
+    parser.add_argument('--log_file', type=str, default='pointnet_10_concat_pre_embed_semantic3d_noaug.log', help='')
 
     parser.add_argument('--eval',type=bool, default=False, help='')
     parser.add_argument('--eval_model',type=str, default='model/label/unsupervise80.ckpt',help='')
@@ -52,9 +53,8 @@ def tower_loss(xyzs, feats, labels, is_training,reuse=False):
 
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         xyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
-            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.25,voxel_size2=1.0,block_size=10.0)
-        global_feats,local_feats,ops=graph_conv_pool_edge_simp_2layers_s3d(xyzs, dxyzs, feats, vlens, vbegs, vcens,
-                                                                           [0.25, 1.0], 10.0, [0.25,0.5,2.0], reuse)
+            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.25,voxel_size2=0.75,block_size=10.0)
+        global_feats,local_feats=pointnet_10_concat_pre_embed_semantic3d(xyzs,dxyzs,feats,vlens,vbegs,vcens,reuse)
 
         global_feats_exp=tf.expand_dims(global_feats,axis=0)
         local_feats_exp=tf.expand_dims(local_feats,axis=0)
@@ -140,8 +140,9 @@ def fill_feed_dict(feed_in,feed_dict,pls,num_gpus):
     batch_pt_num=0
     for k in xrange(num_gpus):
         feed_dict[pls['xyzs'][k]]=xyzs[k]
-        feats=np.concatenate([rgbs[k],covars[k]],axis=1)
-        feed_dict[pls['feats'][k]]=feats
+        feed_dict[pls['feats'][k]]=rgbs[k]
+        # feats=np.concatenate([rgbs[k],covars[k]],axis=1)
+        # feed_dict[pls['feats'][k]]=feats
         feed_dict[pls['lbls'][k]]=lbls[k]
 
         batch_pt_num += lbls[k].shape[0]
@@ -185,7 +186,7 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
 
         # the generated training set is too large
         # so every 20000 examples we test once and save the model
-        if i>(20000/FLAGS.num_gpus):
+        if i*FLAGS.num_gpus>10871:
             break
 
     log_str('epoch {} cost {} s'.format(epoch_num, time.time()-epoch_begin), FLAGS.log_file)
@@ -232,7 +233,7 @@ def build_placeholder(num_gpus):
     pls['xyzs'], pls['feats'], pls['lbls'],pls['weights']=[],[],[],[]
     for i in xrange(num_gpus):
         pls['xyzs'].append(tf.placeholder(tf.float32,[None,3],'xyzs{}'.format(i)))
-        pls['feats'].append(tf.placeholder(tf.float32,[None,13],'feats{}'.format(i)))
+        pls['feats'].append(tf.placeholder(tf.float32,[None,4],'feats{}'.format(i)))
         pls['lbls'].append(tf.placeholder(tf.int32,[None],'lbls{}'.format(i)))
         pls['weights'].append(tf.placeholder(tf.float32,[None],'weights{}'.format(i)))
 
@@ -242,15 +243,63 @@ def build_placeholder(num_gpus):
 
 def train():
     from semantic3d_context_util import get_context_train_test
+    from aug_util import swap_xy,flip
+    import random
     test_set=['sg27_station4_intensity_rgb','bildstein_station1_xyz_intensity_rgb']
-    train_list,test_list=get_context_train_test(test_set)
-    train_list=['data/Semantic3D.Net/context/block_avg/'+fn for fn in train_list]
-    test_list=['data/Semantic3D.Net/context/block_avg/'+fn for fn in test_list]
-    def read_fn(model,fn):
-        xyzs, rgbs, covars, lbls, ctx_xyzs, ctx_idxs, block_mins=read_pkl(fn)
+    train_list,test_list=get_semantic3d_block_train_test_list(test_set)
+    train_list=['data/Semantic3D.Net/block/sampled/'+fn for fn in train_list]
+    test_list=['data/Semantic3D.Net/block/sampled/'+fn for fn in test_list]
+
+    def test_fn(model,fn):
+        xyzs, rgbs, covars, lbls, block_mins=read_pkl(fn)
+        for i in xrange(len(xyzs)):
+            pt_num=len(xyzs[i])
+            if pt_num>20480:
+                idxs=np.random.choice(pt_num,20480,False)
+                xyzs[i]=xyzs[i][idxs]
+                rgbs[i]=rgbs[i][idxs]
+                covars[i]=covars[i][idxs]
+                lbls[i]=lbls[i][idxs]
+
         return xyzs, rgbs, covars, lbls, block_mins
-    train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
-    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,read_fn)
+
+    def train_fn(model,fn):
+        xyzs, rgbs, covars, lbls, block_mins=read_pkl(fn)
+        for i in xrange(len(xyzs)):
+            pt_num=len(xyzs[i])
+            if pt_num>4096:
+                idxs=np.random.choice(pt_num,int(np.random.uniform(0.85,1.0)*pt_num),False)
+                xyzs[i]=xyzs[i][idxs]
+                rgbs[i]=rgbs[i][idxs]
+                covars[i]=covars[i][idxs]
+                lbls[i]=lbls[i][idxs]
+
+            pt_num=len(xyzs[i])
+            if pt_num>20480:
+                idxs=np.random.choice(pt_num,20480,False)
+                xyzs[i]=xyzs[i][idxs]
+                rgbs[i]=rgbs[i][idxs]
+                covars[i]=covars[i][idxs]
+                lbls[i]=lbls[i][idxs]
+
+            if random.random()<0.5:
+                xyzs[i]=flip(xyzs[i],axis=0)
+
+            if random.random()<0.5:
+                xyzs[i]=flip(xyzs[i],axis=1)
+
+            if random.random()<0.5:
+                xyzs[i]=swap_xy(xyzs[i])
+
+            jitter_color=np.random.uniform(-0.02,0.02,rgbs[i].shape)
+            rgbs[i]+=jitter_color
+            rgbs[i][rgbs[i]>1.0]=1.0
+            rgbs[i][rgbs[i]<-1.0]=-1.0
+
+        return xyzs, rgbs, covars, lbls, block_mins
+
+    train_provider = Provider(train_list,'train',FLAGS.batch_size*FLAGS.num_gpus,test_fn)
+    test_provider = Provider(test_list,'test',FLAGS.batch_size*FLAGS.num_gpus,test_fn)
 
     try:
         pls=build_placeholder(FLAGS.num_gpus)

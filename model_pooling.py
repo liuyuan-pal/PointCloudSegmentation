@@ -803,72 +803,153 @@ def check_nn(pn,idxs,lens,begs,cens):
 # vc1 = 0.25
 # vc2 = 1.0
 def test_semantic3d_block():
-
-    from io_util import read_pkl,get_semantic3d_block_train_list
+    from io_util import read_pkl,semantic3d_read_train_block_list
     import numpy as np
     import random
-    train_list,test_list=get_semantic3d_block_train_list()
-    train_list=['data/Semantic3D.Net/block/sampled/merged/'+fn for fn in train_list]
-    test_list=['data/Semantic3D.Net/block/sampled/merged/'+fn for fn in test_list]
-    train_list+=test_list
+    train_list=semantic3d_read_train_block_list()
+    train_list=['data/Semantic3D.Net/block/sampled/'+fn for fn in train_list]
     random.shuffle(train_list)
+
+    xyzs_pl = tf.placeholder(tf.float32, [None, 3], 'xyzs')
+    feats_pl = tf.placeholder(tf.float32, [None, 4], 'feats')
+    labels_pl = tf.placeholder(tf.int32, [None], 'labels')
+    [pts1, pts2, pts3], [dpts1, dpts2], feats, _, [vlens1, vlens2], [vbegs1, vbegs2], [vcens1, vcens2], vidx1, vidx2 = \
+        points_pooling_two_layers_tmp(xyzs_pl, feats_pl, labels_pl, 0.25, 0.75, 10.0)
+
+    nidxs1, nlens1, nbegs1, ncens1 = search_neighborhood(pts1, 0.2)
+    nidxs2, nlens2, nbegs2, ncens2 = search_neighborhood(pts2, 0.4)
+    nidxs3, nlens3, nbegs3, ncens3 = search_neighborhood(pts3, 1.5)
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
     config.log_device_placement = False
-    sess=tf.Session(config=config)
-    # for k in xrange(len(train_list)):
-    for k in xrange(3):
-    # for _ in xrange(1):
-        xyzs,rgbs,covars,labels=read_pkl(train_list[k])
-        # xyzs,rgbs,covars,labels=read_pkl('tmp_data.pkl')
+    with tf.Session(config=config) as sess:
+        pn1,pn2,pn3,nn1,nn2,nn3,vn1,vn2=[],[],[],[],[],[],[],[]
+        for i in xrange(len(train_list[:15])):
+            xyzs,rgbs,covars,lbls,block_mins= read_pkl(train_list[i])
+            for t in xrange(len(xyzs[:10])):
+                pt_num = len(xyzs[t])
+                if pt_num>20480:
+                    idxs = np.random.choice(pt_num, 20480, False)
+                    xyzs[t] = xyzs[t][idxs]
+                    rgbs[t] = rgbs[t][idxs]
+                    covars[t] = covars[t][idxs]
+                    lbls[t] = lbls[t][idxs]
 
-        xyzs_pl = tf.placeholder(tf.float32, [None, 3], 'xyzs')
-        feats_pl = tf.placeholder(tf.float32, [None, 4], 'feats')
-        labels_pl = tf.placeholder(tf.int32, [None], 'labels')
-        [pts1, pts2, pts3], [dpts1, dpts2], feats, _, [vlens1, vlens2], [vbegs1, vbegs2], [vcens1, vcens2], vidx1, vidx2 = \
-            points_pooling_two_layers_tmp(xyzs_pl, feats_pl, labels_pl, 0.25, 1.0, 10.0)
+                p1,p2,p3,nl1,nl2,nl3,vl1,vl2,dp1,dp2,vc1,vc2=\
+                    sess.run([pts1, pts2, pts3, nlens1, nlens2, nlens3, vlens1, vlens2, dpts1, dpts2,vcens1,vcens2],
+                             feed_dict={xyzs_pl:xyzs[t],feats_pl:rgbs[t],labels_pl:lbls[t]},)
+                # output_points('test_result/{}_1.txt'.format(t),p1)
+                # output_points('test_result/{}_2.txt'.format(t),p2)
+                # output_points('test_result/{}_3.txt'.format(t),p3)
+                # check_dxyzs(p1,p2,dp1,vc1)
+                # check_dxyzs(p2,p3,dp2,vc2)
 
-        nidxs1, nlens1, nbegs1, ncens1 = search_neighborhood(pts1, 0.25)
-        nidxs2, nlens2, nbegs2, ncens2 = search_neighborhood(pts2, 0.5)
-        nidxs3, nlens3, nbegs3, ncens3 = search_neighborhood(pts3, 2.0)
+                print 'lvl {} pn {} nr {} vl {}'.format(1,p1.shape[0],np.mean(nl1),np.mean(vl1))
+                print 'lvl {} pn {} nr {} vl {}'.format(2,p2.shape[0],np.mean(nl2),np.mean(vl2))
+                print 'lvl {} pn {} nr {}'.format(3,p3.shape[0],np.mean(nl3))
+                print '/////////////////////////////////////////////////////'
 
-        for t in xrange(len(xyzs)):
-            xyzs1,xyzs2,xyzs3,nn1,nn2,nn3,vi1,vi2,vl1,vl2,vc1,vc2,vb1,vb2,\
-                nl1,nl2,nl3,nb1,nb2,nb3,nc1,nc2,nc3=\
-                sess.run([pts1, pts2, pts3, nidxs1, nidxs2, nidxs3, vidx1, vidx2,
-                          vlens1, vlens2,vcens1, vcens2,vbegs1, vbegs2,
-                          nlens1,nlens2,nlens3,nbegs1,nbegs2,nbegs3,ncens1,ncens2,ncens3],
-                         feed_dict={xyzs_pl:xyzs[t],feats_pl:rgbs[t],labels_pl:labels[t]},)
-            assert np.sum(vi1<0)==0
-            assert np.sum(vi2<0)==0
-            check_vidxs(len(xyzs2),len(xyzs1),vl1,vb1,vc1)
-            check_vidxs(len(xyzs3),len(xyzs2),vl2,vb2,vc2)
-            # check_vidxs(len(xyzs1),len(nc1),nl1,nb1,nc1)
-            # check_vidxs(len(xyzs2),len(nc2),nl2,nb2,nc2)
-            # check_vidxs(len(xyzs3),len(nc3),nl3,nb3,nc3)
+                pn1.append(p1.shape[0])
+                pn2.append(p2.shape[0])
+                pn3.append(p3.shape[0])
+                nn1.append(np.mean(nl1))
+                nn2.append(np.mean(nl2))
+                nn3.append(np.mean(nl3))
+                vn1.append(np.mean(vl1))
+                vn2.append(np.mean(vl2))
 
-            print '{}_lvl 0 pn {} avg_nn {}'.format(t,len(xyzs1),len(nn1)/float(len(xyzs1)))
-            print '{}_lvl 1 pn {} avg_nn {}'.format(t,len(xyzs2),len(nn2)/float(len(xyzs2)))
-            print '{}_lvl 2 pn {} avg_nn {}'.format(t,len(xyzs3),len(nn3)/float(len(xyzs3)))
-            print np.min(vi1,axis=0)
-            print np.max(vi1,axis=0)
-            print np.min(vi2,axis=0)
-            print np.max(vi2,axis=0)
+        pn1=np.mean(pn1)
+        pn2=np.mean(pn2)
+        pn3=np.mean(pn3)
+        nn1=np.mean(nn1)
+        nn2=np.mean(nn2)
+        nn3=np.mean(nn3)
+        vn1=np.mean(vn1)
+        vn2=np.mean(vn2)
 
-            # print vc1[466]
-            # print vb1[vc1[466]],vl1[vc1[466]]
-            # for k in xrange(466,475):
-            #     print nl1[k]
-            # print xyzs2[vc1[466]]
-            # print nl2[vc1[466]]
-            # output_points('test_result/{}.txt'.format(),xyzs1[466:475,:])
+        print pn1,pn2,pn3
+        print nn1,nn2,nn3
+        print vn1,vn2
 
-            print '/////////////////////////////'
+def test_semantic3d_block_dense():
+    from io_util import read_pkl,semantic3d_read_train_block_list
+    import numpy as np
+    import random
+    import libPointUtil
+    import time
+    train_list=semantic3d_read_train_block_list()
+    train_list=['/data/Semantic3D.Net/'+fn for fn in train_list]
+    random.shuffle(train_list)
 
+    xyzs_pl = tf.placeholder(tf.float32, [None, 3], 'xyzs')
+    feats_pl = tf.placeholder(tf.float32, [None, 4], 'feats')
+    labels_pl = tf.placeholder(tf.int32, [None], 'labels')
+    idxs_pl = tf.placeholder(tf.int32, [None], 'idxs')
 
-        print '{} done'.format(train_list[k])
+    xyzs_pl=tf.gather(xyzs_pl,idxs_pl)
+    feats_pl=tf.gather(feats_pl,idxs_pl)
+    labels_pl=tf.gather(labels_pl,idxs_pl)
+
+    [pts1, pts2, pts3], [dpts1, dpts2], feats, _, [vlens1, vlens2], [vbegs1, vbegs2], [vcens1, vcens2], vidx1, vidx2 = \
+        points_pooling_two_layers_tmp(xyzs_pl, feats_pl, labels_pl, 0.45, 1.5, 10.0)
+
+    nidxs1, nlens1, nbegs1, ncens1 = search_neighborhood(pts2, 0.9)
+    nidxs2, nlens2, nbegs2, ncens2 = search_neighborhood_range(pts2, 0.9, 1.25)
+    nidxs3, nlens3, nbegs3, ncens3 = search_neighborhood_range(pts2, 1.25, 1.6)
+
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    config.allow_soft_placement = True
+    config.log_device_placement = False
+    with tf.Session(config=config) as sess:
+        pn1,pn2,pn3,nn1,nn2,nn3,vn1,vn2=[],[],[],[],[],[],[],[]
+        for i in xrange(len(train_list[:15])):
+            xyzs, rgbs, lbls, block_mins, _, _, _= read_pkl(train_list[i])
+            for t in xrange(len(xyzs[:10])):
+                begin=time.time()
+                idxs = libPointUtil.gridDownsampleGPU(xyzs[t], 0.15, False)
+                np.random.shuffle(idxs)
+                idxs = idxs[:20480]
+                print 'cost {} s'.format(time.time()-begin)
+
+                p1,p2,p3,nl1,nl2,nl3,vl1,vl2,dp1,dp2,vc1,vc2=\
+                    sess.run([pts1, pts2, pts3, nlens1, nlens2, nlens3, vlens1, vlens2, dpts1, dpts2,vcens1,vcens2],
+                             feed_dict={xyzs_pl:xyzs[t],feats_pl:rgbs[t],labels_pl:lbls[t],idxs_pl:idxs},
+                             )
+                # output_points('test_result/{}_1.txt'.format(t),p1)
+                # output_points('test_result/{}_2.txt'.format(t),p2)
+                # output_points('test_result/{}_3.txt'.format(t),p3)
+                # check_dxyzs(p1,p2,dp1,vc1)
+                # check_dxyzs(p2,p3,dp2,vc2)
+
+                # print 'lvl {} pn {} nr {} vl {}'.format(1,p1.shape[0],np.mean(nl1),np.mean(vl1))
+                # print 'lvl {} pn {} nr {} vl {}'.format(2,p2.shape[0],np.mean(nl2),np.mean(vl2))
+                # print 'lvl {} pn {} nr {}'.format(3,p3.shape[0],np.mean(nl3))
+                # print '/////////////////////////////////////////////////////'
+
+                pn1.append(p1.shape[0])
+                pn2.append(p2.shape[0])
+                pn3.append(p3.shape[0])
+                nn1.append(np.mean(nl1))
+                nn2.append(np.mean(nl2))
+                nn3.append(np.mean(nl3))
+                vn1.append(np.mean(vl1))
+                vn2.append(np.mean(vl2))
+
+        pn1=np.mean(pn1)
+        pn2=np.mean(pn2)
+        pn3=np.mean(pn3)
+        nn1=np.mean(nn1)
+        nn2=np.mean(nn2)
+        nn3=np.mean(nn3)
+        vn1=np.mean(vn1)
+        vn2=np.mean(vn2)
+
+        print pn1,pn2,pn3
+        print nn1,nn2,nn3
+        print vn1,vn2
 
 def test_context_neighborhood():
     from semantic3d_context_util import get_context_train_test
@@ -929,6 +1010,5 @@ def test_semantic3d_block_context():
 
         print '{} done'.format(train_list[k])
 
-
 if __name__=="__main__":
-    test_block()
+    test_semantic3d_block_dense()

@@ -109,6 +109,7 @@ void neighborSumFeatScatterGPU(
 
     dim3 block_dim(bdim0,bdim1,bdim2);
     dim3 thread_dim(tdim0,tdim1,tdim2);
+    if(bdim0==0||tdim0==0) return;
 
     sumFeatScatter<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>(d_igfeats_sum,d_icidxs,fd,csum,d_osfeats);
     gpuErrchk(cudaGetLastError())
