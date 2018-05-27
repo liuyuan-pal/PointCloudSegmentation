@@ -10,6 +10,7 @@ TF_LIB=$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_lib())')
 /usr/local/cuda/bin/nvcc PoolingIndex/SearchNeighborhood.cu -o build/SearchNeighborhood.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
 /usr/local/cuda/bin/nvcc PoolingIndex/ComputePermutationInfo.cu -o build/ComputePermutationInfo.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
 /usr/local/cuda/bin/nvcc PoolingIndex/ComputeRepermutationInfo.cu -o build/ComputeRepermutationInfo.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
+/usr/local/cuda/bin/nvcc PoolingIndex/SearchNeighborhoodFixed.cu -o build/SearchNeighborhoodFixed.cu.o -c -DGOOGLE_CUDA=1 -x cu -Xcompiler -fPIC -O2
 
 
 cu_lib="build/ComputeDiffXYZ.cu.o
@@ -18,6 +19,7 @@ cu_lib="build/ComputeDiffXYZ.cu.o
         build/SearchNeighborhood.cu.o
         build/ComputePermutationInfo.cu.o
         build/ComputeRepermutationInfo.cu.o
+        build/SearchNeighborhoodFixed.cu.o
         "
 
 cc_file="PoolingIndex/ComputeDiffXYZ.cc
@@ -27,6 +29,7 @@ cc_file="PoolingIndex/ComputeDiffXYZ.cc
         PoolingIndex/ComputePermutationInfo.cpp
         PoolingIndex/ComputePermutationInfo.cc
         PoolingIndex/ComputeRepermutationInfo.cc
+        PoolingIndex/SearchNeighborhoodFixed.cc
         "
 
 g++ -std=c++11 -shared ${cu_lib} ${cc_file} -o build/PoolingOps.so \

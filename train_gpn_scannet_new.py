@@ -5,6 +5,7 @@ import os
 
 import tensorflow as tf
 from model_pooling import points_pooling_two_layers,graph_conv_pool_edge_simp_2layers,classifier_v3
+from model_pointnet import *
 from train_util import *
 from io_util import read_pkl,get_scannet_class_names
 from provider import Provider,default_unpack_feats_labels
@@ -16,17 +17,17 @@ parser.add_argument('--batch_size', type=int, default=1, help='')
 parser.add_argument('--lr_init', type=float, default=1e-3, help='')
 parser.add_argument('--lr_clip', type=float, default=1e-5, help='')
 parser.add_argument('--decay_rate', type=float, default=0.5, help='')
-parser.add_argument('--decay_epoch', type=int, default=50, help='')
-parser.add_argument('--num_classes', type=int, default=21, help='')
+parser.add_argument('--decay_epoch', type=int, default=25, help='')
+parser.add_argument('--num_classes', type=int, default=20, help='')
 
 parser.add_argument('--restore',type=bool, default=False, help='')
 parser.add_argument('--restore_epoch', type=int, default=0, help='')
 parser.add_argument('--restore_model', type=str, default='', help='')
 
 parser.add_argument('--log_step', type=int, default=240, help='')
-parser.add_argument('--train_dir', type=str, default='train/scannet_new', help='')
-parser.add_argument('--save_dir', type=str, default='model/scannet_new', help='')
-parser.add_argument('--log_file', type=str, default='scannet_new.log', help='')
+parser.add_argument('--train_dir', type=str, default='train/pointnet_13_dilated_embed_scannet_nocovar', help='')
+parser.add_argument('--save_dir', type=str, default='model/pointnet_13_dilated_embed_scannet_nocovar', help='')
+parser.add_argument('--log_file', type=str, default='pointnet_13_dilated_embed_scannet_nocovar.log', help='')
 
 
 parser.add_argument('--eval',type=bool, default=False, help='')
@@ -65,9 +66,8 @@ lbl_weights=np.asarray([
 def tower_loss(xyzs, feats, labels, is_training,reuse=False):
     with tf.variable_scope(tf.get_variable_scope(),reuse=reuse):
         xyzs, dxyzs, feats, labels, vlens, vbegs, vcens = \
-            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.15,voxel_size2=0.3,block_size=3.0)
-        global_feats,local_feats,ops=graph_conv_pool_edge_simp_2layers(xyzs, dxyzs, feats, vlens, vbegs, vcens,
-                                                                       [0.15, 0.3], 3.0, [0.15,0.3,0.5], reuse)
+            points_pooling_two_layers(xyzs,feats,labels,voxel_size1=0.15,voxel_size2=0.45,block_size=3.0)
+        global_feats, local_feats = pointnet_13_dilated_embed_scannet(xyzs, dxyzs, vlens, vbegs, vcens, reuse)
         global_feats=tf.expand_dims(global_feats,axis=0)
         local_feats=tf.expand_dims(local_feats,axis=0)
         logits=classifier_v3(global_feats, local_feats, is_training, FLAGS.num_classes, reuse, use_bn=False)  # [1,pn,num_classes]
@@ -75,12 +75,17 @@ def tower_loss(xyzs, feats, labels, is_training,reuse=False):
     flatten_logits=tf.reshape(logits,[-1,FLAGS.num_classes])  # [pn,num_classes]
     labels_flatten=tf.reshape(labels,[-1,1])                  # [pn,1]
     labels_flatten=tf.squeeze(labels_flatten,axis=1)          # [pn]
-    train_weights=tf.Variable(lbl_weights,False,name='train_weights')
+    train_weights=tf.constant(lbl_weights,name='train_weights')
     weights=tf.gather(train_weights,labels)
+
+    comparison=tf.equal(labels_flatten,tf.constant(0,dtype=tf.int64,name='zero_constant'))
+    labels_flatten=tf.where(comparison, tf.ones_like(labels_flatten), labels_flatten)
+    labels_flatten-=1
     loss=tf.losses.sparse_softmax_cross_entropy(labels_flatten,flatten_logits,weights=weights)
     tf.summary.scalar(loss.op.name,loss)
 
-    return loss,logits,labels
+    comparison=tf.logical_not(comparison)
+    return loss,logits,labels_flatten,comparison
 
 
 def train_ops(xyzs,feats,labels,is_training,epoch_batch_num,):
@@ -103,16 +108,18 @@ def train_ops(xyzs,feats,labels,is_training,epoch_batch_num,):
         tower_losses=[]
         tower_logits=[]
         tower_labels=[]
+        tower_masks=[]
         for i in range(FLAGS.num_gpus):
             with tf.device('/gpu:{}'.format(i)):
                 with tf.name_scope('tower_{}'.format(i)):
-                    loss,logits,plabels=tower_loss(xyzs[i],feats[i],labels[i],is_training,reuse)
+                    loss,logits,plabels,masks=tower_loss(xyzs[i],feats[i],labels[i],is_training,reuse)
 
                     grad=opt.compute_gradients(loss)
                     tower_grads.append(grad)
                     tower_losses.append(loss)
                     tower_labels.append(plabels)
                     tower_logits.append(tf.squeeze(logits,axis=0))
+                    tower_masks.append(masks)
                     update_op = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
                     summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
                     reuse=True
@@ -126,6 +133,7 @@ def train_ops(xyzs,feats,labels,is_training,epoch_batch_num,):
         total_loss_op=tf.add_n(tower_losses)/FLAGS.num_gpus
         logits_op=tf.concat(tower_logits,axis=0)
         tower_labels=tf.concat(tower_labels,axis=0)
+        tower_masks=tf.concat(tower_masks,axis=0)
 
         ops['total_loss']=total_loss_op
         ops['apply_grad']=apply_grad_op
@@ -134,6 +142,7 @@ def train_ops(xyzs,feats,labels,is_training,epoch_batch_num,):
         ops['global_step']=global_step
         ops['labels']=tower_labels
         ops['learning_rate']=lr
+        ops['masks']=tower_masks
 
     return ops
 
@@ -148,14 +157,14 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
 
         feed_dict[pls['is_training']]=True
 
-        _,loss_val,logits,batch_labels,lr=sess.run([ops['apply_grad'],ops['total_loss'],ops['logits'],
-                                                    ops['labels'],ops['learning_rate']],feed_dict)
+        _,loss_val,logits,labels,lr,masks=sess.run([ops['apply_grad'],ops['total_loss'],ops['logits'],
+                                                    ops['labels'],ops['learning_rate'],ops['masks']],feed_dict)
         total_block+=FLAGS.num_gpus
-        total_points+=batch_pt_num-np.sum(batch_labels==0)
+        total_points+=np.sum(masks)
 
         total_losses.append(loss_val)
-        preds=np.argmax(logits[:,1:],axis=1)+1
-        total_correct+=np.sum((batch_labels!=0)&(batch_labels==preds))
+        preds=np.argmax(logits,axis=1)
+        total_correct+=np.sum(labels[masks]==preds[masks])
 
         if i % FLAGS.log_step==0:
             summary,global_step=sess.run(
@@ -163,7 +172,7 @@ def train_one_epoch(ops,pls,sess,summary_writer,trainset,epoch_num,feed_dict):
 
             log_str('epoch {} step {} loss {:.5} acc {:.5} | {:.5} examples/s lr {:.5}'.format(
                 epoch_num,i,np.mean(np.asarray(total_losses)),
-                float(total_correct)/total_points,
+                float(total_correct+1)/(total_points+1),
                 float(total_block)/(time.time()-begin_time),
                 lr
             ),FLAGS.log_file)
@@ -190,18 +199,16 @@ def test_one_epoch(ops,pls,sess,saver,testset,epoch_num,feed_dict,summary_writer
 
         feed_dict[pls['is_training']] = False
 
-        loss,logits,batch_labels=sess.run([ops['total_loss'],ops['logits'],ops['labels']],feed_dict)
-        all_labels.append(batch_labels)
-        preds=np.argmax(logits[:,1:],axis=1)+1
+        loss,logits,labels,masks=sess.run([ops['total_loss'],ops['logits'],
+                                           ops['labels'],ops['masks']],feed_dict)
+        all_labels.append(labels[masks])
+        preds=np.argmax(logits,axis=1)[masks]
         test_loss.append(loss)
         all_preds.append(preds)
 
     all_preds=np.concatenate(all_preds,axis=0)
     all_labels=np.concatenate(all_labels,axis=0)
-    mask=all_labels!=0
-    all_preds=all_preds[mask]
-    all_labels=all_labels[mask]
-    iou, miou, oiou, acc, macc, oacc = compute_iou(all_labels-1,all_preds-1,20)
+    iou, miou, oiou, acc, macc, oacc = compute_iou(all_labels,all_preds,20)
 
     test_loss=np.mean(np.asarray(test_loss))
     log_str('mean iou {:.5} overall iou {:5} loss {:5} \n mean acc {:5} overall acc {:5} cost {:3} s'.format(

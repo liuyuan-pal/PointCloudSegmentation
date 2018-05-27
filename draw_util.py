@@ -56,6 +56,7 @@ def get_scannet_class_colors():
         [32,178,170], # toilet
         [160,82,45],  # curtain
         [222,184,135], # counter
+        [218,165,32], # door
         [135,206,250], # window
         [160,82,45],  # shower curtain
         [235,235,235], # refridgerator

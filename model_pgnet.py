@@ -996,7 +996,7 @@ def pgnet_model_v7(xyzs, dxyzs, feats, vlens, vbegs, vcens, reuse=False):
         return lf0, feats_stage0
 
 def mlp_anchor_conv(sxyzs, feats, ifn, weights_dims, ofn, anchor_num, name,
-                    nidxs, nlens, nbegs, ncens, reuse=None, l2_norm=False):
+                    nidxs, nlens, nbegs, ncens, reuse=None, l2_norm=True):
     with tf.name_scope(name):
         # [pn]
         edge_weights_feats = neighbor_ops.neighbor_scatter(feats, nidxs, nlens, nbegs, use_diff=True)
@@ -1034,7 +1034,7 @@ def mlp_anchor_conv(sxyzs, feats, ifn, weights_dims, ofn, anchor_num, name,
 
         output_point_feats = tf.contrib.layers.fully_connected(
             weighted_point_feats, num_outputs=ofn, scope='{}_fc_out'.format(name),
-            activation_fn=None, reuse=reuse)
+            activation_fn=tf.nn.leaky_relu, reuse=reuse)
 
         return output_point_feats
 

@@ -15,7 +15,7 @@ import os
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--restore_model', type=str, default='', help='')
-parser.add_argument('--prefix', type=str, default='pointnet_13_dilate_embed_dense_10', help='')
+parser.add_argument('--prefix', type=str, default='pointnet_13_dilated_embed_23_revise', help='')
 parser.add_argument('--rotation_index', type=int, default=0, help='')
 parser.add_argument('--num_classes', type=int, default=8, help='')
 
@@ -93,6 +93,30 @@ def interpolate(sxyzs,sprobs,qxyzs,ratio=1.0/(2*0.15*0.15)):
 
     return qprobs
 
+def read_natural_terrain():
+    with open('cached/sg28-natural-terrain-v2.txt', 'r') as f:
+        natural_xyzs=[]
+        for line in f.readlines():
+            parts=line.split(' ')
+            x=float(parts[0])
+            y=float(parts[1])
+            z=float(parts[2])
+            natural_xyzs.append([x,y,z])
+
+    natural_xyzs=np.asarray(natural_xyzs,np.float32)
+    return natural_xyzs
+
+def interpolate_natural_terrain(sxyzs,qxyzs,qprobs):
+    print sxyzs.shape,qxyzs.shape,qprobs.shape
+    nidxs=libPointUtil.findNeighborInAnotherCPU(sxyzs,qxyzs,0.22)
+    nlens=np.asarray([len(idxs) for idxs in nidxs],dtype=np.int32)
+    qpreds=np.argmax(qprobs,axis=1)
+    mask=np.logical_and(nlens>0,qpreds==0)
+    qprobs[mask,0]=0.0
+    qprobs[mask,1]=1.0
+
+    return qprobs
+
 def save_results(sxyzs,qxyzs,sprobs,qprobs,prefix,fs):
     colors=get_semantic3d_class_colors()
     spreds=np.argmax(sprobs,axis=1)+1
@@ -114,8 +138,7 @@ def save_results(sxyzs,qxyzs,sprobs,qprobs,prefix,fs):
     qpreds=qpreds[idxs]
     output_points('{}/{}_dense.txt'.format(dir,fs),qxyzs,colors[qpreds])
 
-
-if __name__=="__main__":
+def process():
     sess, pls, ops, feed_dict = build_session()
     with open('cached/semantic3d_test_stems.txt','r') as f:
         lines=f.readlines()
@@ -130,3 +153,19 @@ if __name__=="__main__":
         qprobs=interpolate(sxyzs,sprobs,qxyzs)
 
         save_results(sxyzs,qxyzs,sprobs,qprobs,FLAGS.prefix,fs)
+
+        save_pkl('cached/sg28_qxyzs.pkl',qxyzs)
+        save_pkl('cached/sg28_qprobs.pkl',qprobs)
+
+def process_revise():
+    qxyzs=read_pkl('cached/sg28_qxyzs.pkl')
+    qprobs=read_pkl('cached/sg28_qprobs.pkl')
+    sxyzs=read_natural_terrain()
+
+    qprobs=interpolate_natural_terrain(sxyzs,qxyzs,qprobs)
+
+    save_results(sxyzs, qxyzs, np.random.uniform(0,1.0,[sxyzs.shape[0],8]),
+                 qprobs, FLAGS.prefix, 'sg28_revise')
+
+if __name__=="__main__":
+    process_revise()

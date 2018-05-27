@@ -301,9 +301,6 @@ def merge_train_by_area():
 
 def test_block_train():
     train_list,test_list=get_block_train_test_split()
-    random.shuffle(train_list)
-
-    train_list_add=['data/S3DIS/sampled_train_nolimits/'+fn for fn in train_list]
 
     from draw_util import get_class_colors,output_points
     # colors=get_class_colors()
@@ -315,16 +312,30 @@ def test_block_train():
     #         rgbs[i]*=127
     #         output_points('test_result/{}clr.txt'.format(i),xyzs[i],rgbs[i])
     #         output_points('test_result/{}lbl.txt'.format(i),xyzs[i],colors[lbls[i]])
-    count=0
-    pt_nums=[]
-    for fn in train_list_add:
-        xyzs, rgbs, covars, lbls, block_mins=read_pkl(fn)
-        count+=len(xyzs)
-        pt_nums+=[len(pts) for pts in xyzs]
+    # count=0
+    # pt_nums=[]
+    #
+    # stem2num={}
+    # for fn in train_list:
+    #     xyzs, rgbs, covars, lbls, block_mins=read_pkl('data/S3DIS/sampled_train_nolimits/'+fn)
+    #     stem='_'.join(fn.split('_')[1:])
+    #     if stem in stem2num:
+    #         stem2num[stem]+=len(xyzs)
+    #     else:
+    #         stem2num[stem]=len(xyzs)
+    #
+    #     print stem,stem2num[stem]
+    #     count+=len(xyzs)
+    #     pt_nums+=[len(pts) for pts in xyzs]
+    #
+    # print count
+    # print np.max(pt_nums)
+    # print np.histogram(pt_nums)
 
-    print count
-    print np.max(pt_nums)
-    print np.histogram(pt_nums)
+
+    xyzs, rgbs, covars, lbls, block_mins = read_pkl('data/S3DIS/sampled_train_nolimits/{}'.format('1_Area_1_conferenceRoom_2.pkl'))
+    for i in xrange(len(xyzs)):
+        output_points('test_result/{}.txt'.format(i),xyzs[i]+block_mins[i],rgbs[i]*127+128)
 
 
 def compare():
@@ -444,4 +455,4 @@ def visual_room():
 
 
 if __name__=="__main__":
-    compute_weight()
+    test_block_train()

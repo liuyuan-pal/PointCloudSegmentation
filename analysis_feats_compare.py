@@ -15,6 +15,18 @@ def read_mious(fn):
 
     return mious
 
+def read_maccs(fn):
+    with open(fn,'r') as f:
+        mious=[]
+        for line in f.readlines():
+            line=line.strip(' ')
+            if not line.startswith('mean acc'):
+                continue
+            miou=float(line.split(' ')[2])
+            mious.append(miou)
+
+    return mious
+
 def read_iou_class(fn,class_name):
     with open(fn,'r') as f:
         ious=[]
@@ -132,8 +144,41 @@ def model_figure():
         plt.savefig('test_result/model_compare_{}.png'.format(fn))
         plt.close()
 
+def model_figure_2():
+    fns=['pointnet_13_dilated_embed_pnnoconcat.log','pointnet_13_dilated_embed_feats_noconcat.log',
+         'pointnet_13_dilated_embed_fixed.log','pointnet_13_embed.log']
+
+    base_mious = read_mious('pointnet_13_dilated_embed.log')
+    for fi,fn in enumerate(fns):
+        plt.figure(0,figsize=(16, 12), dpi=80)
+        mious=read_mious(fn)
+        mious=np.asarray(mious)
+        plt.plot(np.arange(len(base_mious)),base_mious,label='pointnet_10_concat_pre')
+        plt.plot(np.arange(len(mious)),mious,label=fn)
+        plt.legend()
+        plt.savefig('test_result/model_compare_{}.png'.format(fn))
+        plt.close()
+
+def model_figure_2_all():
+    fns=['pointnet_13_dilated_embed_pnnoconcat.log','pointnet_13_dilated_embed_feats_noconcat.log',
+         'pointnet_13_dilated_embed_fixed.log','pointnet_13_embed.log','pointnet_13_dilated_embed.log']
+
+    plt.figure(0, figsize=(16, 12), dpi=80)
+
+    for fi,fn in enumerate(fns):
+        mious=read_mious(fn)
+        maccs=read_maccs(fn)
+        mious=np.asarray(mious)
+        maccs=np.asarray(maccs)
+        plt.plot(np.arange(len(mious)),mious,label=fn)
+        print fn,np.mean(mious[-10:]),np.mean(maccs[-10:])
+
+    plt.legend()
+    plt.savefig('test_result/model_compare_all.png')
+    plt.close()
+
 
 
 if __name__=="__main__":
-    model_figure()
+    model_figure_2_all()
     # print read_iou_class('pointnet_10_concat_pre_compare/feats_stage2_pool.log','beam')

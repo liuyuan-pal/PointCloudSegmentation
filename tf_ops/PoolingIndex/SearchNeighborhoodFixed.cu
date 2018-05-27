@@ -41,7 +41,7 @@ void computeNeighborIdxsFixedKernel(
     if(counts==0)
         nn_idx=pi;
     else
-        nn_idx=*cur_idxs;
+        nn_idx=*(cur_idxs-1);
     for(int i=counts;i<fixed_size;i++)
     {
         *cur_idxs=nn_idx;
@@ -90,7 +90,7 @@ void computeNeighborIdxsFixedRangeKernel(
     if(counts==0)
         nn_idx=pi;
     else
-        nn_idx=*cur_idxs;
+        nn_idx=*(cur_idxs-1);
     for(int i=counts;i<fixed_size;i++)
     {
         *cur_idxs=nn_idx;

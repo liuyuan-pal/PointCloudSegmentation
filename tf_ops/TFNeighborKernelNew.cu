@@ -28,43 +28,6 @@ __global__ void sumFeatGather(
 
 
 
-template<typename FLT_TYPE,typename INT_TYPE>
-void neighborSumFeatGatherGPU(
-        FLT_TYPE *d_ifeats,               // [csum,fd]
-        INT_TYPE *d_nidxs_lens,           // [pn]
-        INT_TYPE *d_nidxs_bgs,            // [pn]
-        INT_TYPE pn,
-        INT_TYPE fd,
-        INT_TYPE csum,
-        FLT_TYPE *d_ogfeats_sum           // [pn,fd]
-)
-{
-    int tdim0,tdim1,tdim2=1;
-    int bdim0,bdim1,bdim2=1;
-
-    tdim1=1024/(tdim2);
-    if(fd<tdim1) tdim1=infTwoExp(fd);
-    bdim1=fd/tdim1;
-    if(fd%tdim1>0) bdim1++;
-
-    tdim0=1024/(tdim1*tdim2);
-    if(pn<tdim0) tdim0=infTwoExp(pn);
-    bdim0=pn/tdim0;
-    if(pn%tdim0>0) bdim0++;
-
-    dim3 block_dim(bdim0,bdim1,bdim2);
-    dim3 thread_dim(tdim0,tdim1,tdim2);
-
-//    printf("%d %d %d\n",csum,m,ofn);
-//    printf("%d %d %d\n",tdim0,tdim1,tdim2);
-//    printf("%d %d %d\n",bdim0,bdim1,bdim2);
-
-    gpuErrchk(cudaMemset(d_ogfeats_sum,0,pn*fd*sizeof(FLT_TYPE)))
-    sumFeatGather<FLT_TYPE,INT_TYPE> <<<block_dim,thread_dim>>>
-            (d_ifeats,d_nidxs_lens,d_nidxs_bgs,fd,pn,d_ogfeats_sum);
-    gpuErrchk(cudaGetLastError())
-}
-
 
 template<typename FLT_TYPE,typename INT_TYPE>
 __global__ void sumFeatScatter(

@@ -26,6 +26,15 @@ def search_neighborhood_range(xyzs,min_radius,max_radius):
                                                                           squared_max_nn_size=max_radius*max_radius)
     return idxs,lens,begs,cens
 
+def search_neighborhood_fixed(xyzs,radius,fixed_size=10):
+    idxs,lens,begs,cens=pooling_ops.search_neighborhood_fixed_brute_force(xyzs,squared_nn_size=radius*radius,fixed_size=fixed_size)
+    return idxs,lens,begs,cens
+
+def search_neighborhood_fixed_range(xyzs,min_radius,max_radius,fixed_size):
+    idxs,lens,begs,cens=pooling_ops.search_neighborhood_fixed_brute_force_range(
+        xyzs,squared_min_nn_size=min_radius*min_radius,squared_max_nn_size=max_radius*max_radius,fixed_size=fixed_size)
+    return idxs,lens,begs,cens
+
 
 def points_pooling(xyzs,feats,labels,voxel_size=0.2,block_size=3.0):
     # voxel idxs
